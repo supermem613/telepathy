@@ -1,0 +1,122 @@
+// Wire protocol between telepathy peers. Line-delimited JSON over TLS-PSK.
+// All messages share an envelope: { type, id?, ...payload }.
+// `id` correlates request/response for send/result and ping/pong.
+
+export type HelloMessage = {
+  type: "hello";
+  alias: string;            // Sender's chosen identity (hostname or override)
+  protocolVersion: 1;
+  capabilities?: {
+    pty?: boolean;          // Can serve PTY frames (Phase 2)
+  };
+};
+
+export type HelloAckMessage = {
+  type: "hello_ack";
+  alias: string;            // Receiver's identity
+  protocolVersion: 1;
+  capabilities?: {
+    pty?: boolean;
+  };
+};
+
+export type SendMessage = {
+  type: "send";
+  id: string;
+  prompt: string;
+};
+
+export type SendResultMessage = {
+  type: "send_result";
+  id: string;
+  ok: boolean;
+  text?: string;            // Final agent response text on success
+  error?: string;           // Error message on failure
+  events?: ActivityEvent[]; // Tool calls, edits, shell commands observed
+};
+
+export type NotifyMessage = {
+  type: "notify";
+  id: string;
+  message: string;
+};
+
+export type NotifyAckMessage = {
+  type: "notify_ack";
+  id: string;
+};
+
+export type PingMessage = { type: "ping"; id: string };
+export type PongMessage = { type: "pong"; id: string };
+
+export type ErrorMessage = {
+  type: "error";
+  id?: string;
+  message: string;
+};
+
+export type ActivityEvent = {
+  ts: number;               // ms since epoch
+  kind: "tool_call" | "tool_result" | "thinking" | "text";
+  summary: string;          // Short human-readable description
+};
+
+// PTY mirror messages (Phase 2). The accept side fans frames out to all
+// subscribers; subscribers (clients) send keystrokes back as pty_input
+// when their viewer is in input-mode.
+
+export type PtySubscribeMessage = {
+  type: "pty_subscribe";
+  id: string;
+};
+
+export type PtySubscribeAckMessage = {
+  type: "pty_subscribe_ack";
+  id: string;
+  ok: boolean;
+  cols?: number;
+  rows?: number;
+  replayBase64?: string;    // Last N bytes from the host's ring buffer (for instant first paint)
+  error?: string;
+};
+
+export type PtyFrameMessage = {
+  type: "pty_frame";
+  dataBase64: string;       // raw PTY output bytes
+};
+
+export type PtyInputMessage = {
+  type: "pty_input";
+  dataBase64: string;       // raw bytes to inject into the PTY
+};
+
+export type PtyResizeMessage = {
+  type: "pty_resize";
+  cols: number;
+  rows: number;
+};
+
+export type PtyUnsubscribeMessage = {
+  type: "pty_unsubscribe";
+};
+
+export type Message =
+  | HelloMessage
+  | HelloAckMessage
+  | SendMessage
+  | SendResultMessage
+  | NotifyMessage
+  | NotifyAckMessage
+  | PingMessage
+  | PongMessage
+  | ErrorMessage
+  | PtySubscribeMessage
+  | PtySubscribeAckMessage
+  | PtyFrameMessage
+  | PtyInputMessage
+  | PtyResizeMessage
+  | PtyUnsubscribeMessage;
+
+export const PROTOCOL_VERSION = 1;
+export const DEFAULT_PORT = 7423;
+export const DEFAULT_VIEWER_PORT = 7424;

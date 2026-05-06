@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>telepathy wall</title>
+<link rel="stylesheet" href="/static/xterm.css?t={{TOKEN}}" />
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; background: #0b0e14; color: #cbd5e1; font-family: ui-sans-serif, system-ui, sans-serif; }
+  header {
+    padding: 8px 14px; display: flex; gap: 14px; align-items: center;
+    background: #0e1219; border-bottom: 1px solid #1f2937;
+    font-size: 13px;
+  }
+  header .title { font-weight: 600; color: #e5e7eb; }
+  header .stats { color: #94a3b8; }
+  header .legend { margin-left: auto; color: #94a3b8; font-size: 12px; }
+  #grid { display: grid; gap: 8px; padding: 8px; height: calc(100% - 40px); grid-template-columns: 1fr; }
+  .tile {
+    background: #0a0d12; border: 1px solid #1f2937; border-radius: 6px; overflow: hidden;
+    display: flex; flex-direction: column; min-height: 0;
+  }
+  .tile.active { border-color: #38bdf8; }
+  .tile .head {
+    padding: 4px 10px; font-size: 12px; color: #94a3b8;
+    display: flex; gap: 8px; align-items: center;
+    background: #0e1219; border-bottom: 1px solid #1f2937;
+    cursor: pointer;
+  }
+  .tile .head .alias { color: #e5e7eb; font-weight: 600; }
+  .tile .head .dot { width: 8px; height: 8px; border-radius: 50%; background: #475569; }
+  .tile .head .dot.live { background: #22c55e; }
+  .tile .head .dot.offline { background: #ef4444; }
+  .tile .head .pty-warn { color: #f59e0b; font-size: 11px; }
+  .tile .term { flex: 1; min-height: 0; padding: 4px; }
+  .empty {
+    display: flex; align-items: center; justify-content: center; height: 100%;
+    color: #64748b; font-size: 14px; text-align: center; padding: 40px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="title">📡 telepathy wall</div>
+  <div class="stats" id="stats">discovering peers…</div>
+  <div class="legend">click a tile to focus · esc to blur · type to send keystrokes</div>
+</header>
+<div id="grid"><div class="empty">connecting…</div></div>
+<script src="/static/xterm.js?t={{TOKEN}}"></script>
+<script src="/static/addon-fit.js?t={{TOKEN}}"></script>
+<script>
+(async function () {
+  const params = new URLSearchParams(location.search);
+  const TOKEN = params.get("t") || "{{TOKEN}}";
+  const grid = document.getElementById("grid");
+  const stats = document.getElementById("stats");
+  const tiles = new Map();   // alias -> { tile, term, ws, fit, hasPty }
+  let activeAlias = null;
+
+  async function fetchPeers() {
+    const r = await fetch("/api/peers?t=" + encodeURIComponent(TOKEN));
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return (await r.json()).peers;
+  }
+
+  function layoutGrid(n) {
+    const cols = n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4;
+    grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+    const rows = Math.max(1, Math.ceil(n / cols));
+    grid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+  }
+
+  function createTile(peer) {
+    const tile = document.createElement("div");
+    tile.className = "tile";
+    tile.dataset.alias = peer.alias;
+
+    const head = document.createElement("div");
+    head.className = "head";
+    const dot = document.createElement("span"); dot.className = "dot live";
+    const alias = document.createElement("span"); alias.className = "alias"; alias.textContent = peer.alias;
+    const remote = document.createElement("span"); remote.textContent = peer.remoteAlias === peer.alias ? "" : `(${peer.remoteAlias})`;
+    const addr = document.createElement("span"); addr.textContent = peer.remoteAddr;
+    const ptyWarn = document.createElement("span"); ptyWarn.className = "pty-warn";
+    if (!peer.hasPty) ptyWarn.textContent = "⚠ remote has no PTY (was launched without `telepathy host`)";
+    head.append(dot, alias, remote, addr, ptyWarn);
+
+    const termEl = document.createElement("div"); termEl.className = "term";
+    tile.append(head, termEl);
+    grid.appendChild(tile);
+
+    const term = new window.Terminal({
+      fontSize: 12,
+      cursorBlink: true,
+      disableStdin: true,
+      theme: { background: "#0a0d12", foreground: "#cbd5e1" },
+    });
+    const fit = new window.FitAddon.FitAddon();
+    term.loadAddon(fit);
+    term.open(termEl);
+    setTimeout(() => fit.fit(), 0);
+
+    const ws = new WebSocket(`${location.origin.replace("http", "ws")}/ws/${encodeURIComponent(peer.alias)}?t=${encodeURIComponent(TOKEN)}`);
+    ws.onmessage = (ev) => {
+      const msg = JSON.parse(ev.data);
+      if (msg.type === "frame") {
+        term.write(atob(msg.data));
+      } else if (msg.type === "resize") {
+        try { term.resize(msg.cols, msg.rows); } catch (_) {}
+      } else if (msg.type === "error") {
+        term.write(`\\r\\n\\x1b[31m[telepathy] ${msg.message}\\x1b[0m\\r\\n`);
+        dot.classList.remove("live"); dot.classList.add("offline");
+      }
+    };
+    ws.onclose = () => { dot.classList.remove("live"); dot.classList.add("offline"); };
+
+    tile.addEventListener("click", () => focus(peer.alias));
+
+    const entry = { tile, term, ws, fit, hasPty: peer.hasPty };
+    tiles.set(peer.alias, entry);
+    return entry;
+  }
+
+  function focus(alias) {
+    activeAlias = alias;
+    for (const [a, t] of tiles) {
+      t.tile.classList.toggle("active", a === alias);
+    }
+    const t = tiles.get(alias);
+    if (t && t.hasPty) {
+      t.term.options.disableStdin = false;
+      t.term.focus();
+    }
+  }
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      activeAlias = null;
+      for (const t of tiles.values()) {
+        t.tile.classList.remove("active");
+        t.term.options.disableStdin = true;
+      }
+    }
+  });
+
+  // Forward keystrokes from the active tile back via WS as input.
+  function bindInput(entry) {
+    entry.term.onData((data) => {
+      if (entry.ws.readyState === WebSocket.OPEN && entry.hasPty) {
+        entry.ws.send(JSON.stringify({ type: "input", data }));
+      }
+    });
+  }
+
+  async function refresh() {
+    const peers = await fetchPeers();
+    if (peers.length === 0) {
+      grid.innerHTML = '<div class="empty">no peers connected — run /telepathy_connect inside this Copilot session, or wait for an inbound connection</div>';
+      stats.textContent = "0 peers";
+      return;
+    }
+    if (grid.querySelector(".empty")) {
+      grid.innerHTML = "";
+    }
+    layoutGrid(peers.length);
+    for (const peer of peers) {
+      if (!tiles.has(peer.alias)) {
+        const entry = createTile(peer);
+        bindInput(entry);
+      }
+    }
+    // Drop tiles for peers that disappeared.
+    const aliases = new Set(peers.map((p) => p.alias));
+    for (const [a, t] of tiles) {
+      if (!aliases.has(a)) {
+        t.ws.close();
+        t.tile.remove();
+        tiles.delete(a);
+      }
+    }
+    stats.textContent = `${peers.length} peer${peers.length === 1 ? "" : "s"}`;
+  }
+
+  await refresh();
+  setInterval(refresh, 5000);
+  window.addEventListener("resize", () => {
+    for (const t of tiles.values()) {
+      try { t.fit.fit(); } catch (_) {}
+    }
+  });
+})();
+</script>
+</body>
+</html>

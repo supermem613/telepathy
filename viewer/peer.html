@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>telepathy attach</title>
+<link rel="stylesheet" href="/static/xterm.css?t={{TOKEN}}" />
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; background: #0a0d12; color: #cbd5e1; font-family: ui-sans-serif, system-ui, sans-serif; }
+  header { padding: 6px 10px; background: #0e1219; border-bottom: 1px solid #1f2937; font-size: 13px; display: flex; gap: 12px; align-items: center; }
+  header .alias { font-weight: 600; color: #e5e7eb; }
+  header .dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; }
+  header .hint { margin-left: auto; color: #94a3b8; font-size: 12px; }
+  #term-host { height: calc(100% - 32px); padding: 6px; }
+</style>
+</head>
+<body>
+<header>
+  <span class="dot"></span>
+  <span class="alias" id="alias">…</span>
+  <span class="hint">live PTY mirror · click and type to send keystrokes</span>
+</header>
+<div id="term-host"></div>
+<script src="/static/xterm.js?t={{TOKEN}}"></script>
+<script src="/static/addon-fit.js?t={{TOKEN}}"></script>
+<script>
+(async function () {
+  const params = new URLSearchParams(location.search);
+  const TOKEN = params.get("t") || "{{TOKEN}}";
+  const alias = decodeURIComponent(location.pathname.replace("/peer/", ""));
+  document.getElementById("alias").textContent = alias;
+  const term = new window.Terminal({
+    fontSize: 13, cursorBlink: true,
+    theme: { background: "#0a0d12", foreground: "#cbd5e1" },
+  });
+  const fit = new window.FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(document.getElementById("term-host"));
+  fit.fit();
+  const ws = new WebSocket(`${location.origin.replace("http", "ws")}/ws/${encodeURIComponent(alias)}?t=${encodeURIComponent(TOKEN)}`);
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === "frame") term.write(atob(msg.data));
+    else if (msg.type === "resize") { try { term.resize(msg.cols, msg.rows); } catch (_) {} }
+    else if (msg.type === "error") term.write(`\\r\\n\\x1b[31m[telepathy] ${msg.message}\\x1b[0m\\r\\n`);
+  };
+  term.onData((data) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "input", data }));
+    }
+  });
+  window.addEventListener("resize", () => fit.fit());
+})();
+</script>
+</body>
+</html>

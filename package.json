@@ -1,0 +1,53 @@
+{
+  "name": "telepathy",
+  "version": "0.1.0",
+  "description": "Peer-to-peer terminal sharing over the LAN: expose any process under ConPTY, watch from any other box",
+  "type": "module",
+  "bin": {
+    "telepathy": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "node test/run.mjs test/**/*.test.ts",
+    "test:unit": "node test/run.mjs test/unit/**/*.test.ts",
+    "test:integration": "node test/run.mjs test/integration/**/*.test.ts",
+    "lint": "eslint src/ test/ && tsc --noEmit && tsc --noEmit -p test/tsconfig.json",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "terminal",
+    "remote",
+    "lan",
+    "intranet",
+    "conpty",
+    "tls-psk",
+    "xterm"
+  ],
+  "author": "Marcus Markiewicz",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "chalk": "^5.4.1",
+    "commander": "^13.1.0",
+    "node-pty": "^1.0.0",
+    "selfsigned": "^2.4.1",
+    "ws": "^8.18.0",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.18.0",
+    "@types/node": "^20.17.0",
+    "@types/ws": "^8.5.13",
+    "eslint": "^9.18.0",
+    "globals": "^15.14.0",
+    "minimatch": "^10.0.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.20.0"
+  }
+}

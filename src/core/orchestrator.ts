@@ -1,0 +1,366 @@
+// Inbound frame dispatcher. Both accepted and connected peers feed frames
+// here; the dispatcher decides what to do with each message type.
+//
+// Standalone build: there is no copilot extension, no ACP bridge, no
+// notify/send agent layer. The orchestrator handles the hello handshake,
+// PTY subscribe/frame routing, and connection lifecycle. The send/notify
+// message types remain reserved in the protocol for a future agent layer.
+
+import type { TLSSocket } from "node:tls";
+import { send as sendFrame } from "./transport.js";
+import {
+  addPeer,
+  getPeer,
+  listPeers,
+  removePeer,
+  pickAlias,
+  type Peer,
+} from "./peers.js";
+import type {
+  HelloMessage,
+  HelloAckMessage,
+  Message,
+} from "./protocol.js";
+import type { Frame } from "./transport.js";
+
+export type LocalPty = {
+  state: {
+    cols: number;
+    rows: number;
+    ringBuffer: Buffer;
+    subscribers: Set<(frame: { dataBase64: string }) => void>;
+    resizeSubscribers: Set<(size: { cols: number; rows: number }) => void>;
+  };
+  injectInput: (dataBase64: string) => void;
+  requestResize: (cols: number, rows: number) => void;
+  close: () => void;
+};
+
+export type OrchestratorEvents = {
+  onNotify?: (peer: Peer, message: string) => void;
+  onPeerConnected?: (peer: Peer) => void;
+  onPeerDisconnected?: (peer: Peer, reason?: string) => void;
+  onRemoteFrame?: (peer: Peer, dataBase64: string) => void;
+  onRemoteResize?: (peer: Peer, cols: number, rows: number) => void;
+};
+
+let listeners: OrchestratorEvents = {};
+let localPty: LocalPty | null = null;
+
+// Subscribers to a remote peer's PTY (we are the watcher).
+//   key = peer alias, value = subscription bookkeeping.
+const remotePtySubs = new Map<string, { id: string; cols: number; rows: number }>();
+
+// Local PTY subscribers we serve to remote peers (we are the host).
+//   key = peer alias, value = unsubscribe function.
+const localPtyServingSubs = new Map<string, () => void>();
+
+export function setOrchestratorEvents(events: OrchestratorEvents): void {
+  listeners = events;
+}
+
+export function setLocalPty(pty: LocalPty | null): void {
+  localPty = pty;
+}
+
+export function hasLocalPty(): boolean {
+  return localPty !== null;
+}
+
+export function getRemotePtySize(alias: string): { cols: number; rows: number } | null {
+  const sub = remotePtySubs.get(alias);
+  return sub ? { cols: sub.cols, rows: sub.rows } : null;
+}
+
+export function getLocalAlias(): string {
+  // Hostname is the natural identity. Override via env for test isolation.
+  return (process.env.TELEPATHY_ALIAS ?? process.env.COMPUTERNAME ?? process.env.HOSTNAME ?? "host").toLowerCase();
+}
+
+// Called from transport.startListener after a fresh inbound TLS handshake.
+// Performs the hello exchange, then registers the peer.
+export function adoptIncoming(socket: TLSSocket, requestedAliasFallback: string): void {
+  let helloHandled = false;
+  let peer: Peer | undefined;
+  socket.on("close", () => {
+    if (peer) {
+      removePeer(peer.alias);
+      listeners.onPeerDisconnected?.(peer, "closed");
+    }
+  });
+  socket.on("error", (err) => {
+    if (peer) {
+      removePeer(peer.alias);
+      listeners.onPeerDisconnected?.(peer, err.message);
+    }
+  });
+  // Wait for the hello frame from the dialer; promote to a Peer once seen.
+  const onFirst = (frame: Frame): void => {
+    if (helloHandled) {
+      handleFrameForPeer(peer!, frame);
+      return;
+    }
+    if (frame.type !== "hello") {
+      sendFrame(socket, { type: "error", message: "expected hello frame" });
+      socket.end();
+      return;
+    }
+    helloHandled = true;
+    const alias = pickAlias(undefined, frame.alias || requestedAliasFallback);
+    peer = makePeer({
+      alias,
+      remoteAlias: frame.alias,
+      socket,
+      origin: "accepted",
+      remoteAddr: `${socket.remoteAddress ?? "?"}:${socket.remotePort ?? "?"}`,
+      remoteCapabilities: frame.capabilities,
+    });
+    addPeer(peer);
+    const ack: HelloAckMessage = {
+      type: "hello_ack",
+      alias: getLocalAlias(),
+      protocolVersion: 1,
+      capabilities: { pty: hasLocalPty() },
+    };
+    sendFrame(socket, ack);
+    listeners.onPeerConnected?.(peer);
+  };
+  // Re-route subsequent frames through handleFrameForPeer once peer exists.
+  // The transport layer attached its own readline reader; we override by
+  // setting our own handler at the call site.
+  attachReader(socket, onFirst, () => {
+    if (peer) {
+      // Subsequent frames forwarded.
+      // (handleFrameForPeer is called inside the closure, which captures peer.)
+    }
+  });
+}
+
+// Called from cli/tools when user runs telepathy_connect.
+export async function adoptOutgoing(socket: TLSSocket, requestedAlias?: string): Promise<Peer> {
+  const remoteAddr = `${socket.remoteAddress ?? "?"}:${socket.remotePort ?? "?"}`;
+  return new Promise<Peer>((resolve, reject) => {
+    const hello: HelloMessage = {
+      type: "hello",
+      alias: getLocalAlias(),
+      protocolVersion: 1,
+      capabilities: { pty: hasLocalPty() },
+    };
+    sendFrame(socket, hello);
+    let resolved = false;
+    const fail = (msg: string): void => {
+      if (!resolved) {
+        resolved = true;
+        reject(new Error(msg));
+        try {
+          socket.end();
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+    const onFrame = (frame: Frame): void => {
+      if (!resolved) {
+        if (frame.type !== "hello_ack") {
+          fail(`expected hello_ack, got ${frame.type}`);
+          return;
+        }
+        resolved = true;
+        const alias = pickAlias(requestedAlias, frame.alias || "peer");
+        const peer = makePeer({
+          alias,
+          remoteAlias: frame.alias,
+          socket,
+          origin: "connected",
+          remoteAddr,
+          remoteCapabilities: frame.capabilities,
+        });
+        addPeer(peer);
+        listeners.onPeerConnected?.(peer);
+        resolve(peer);
+        return;
+      }
+      // Subsequent frames go through normal dispatch.
+      const existing = getPeer((frame as { _peerHint?: string })._peerHint ?? "")
+        ?? listPeers().find((p) => p.socket === socket);
+      if (existing) {
+        handleFrameForPeer(existing, frame);
+      }
+    };
+    attachReader(socket, onFrame, () => fail("socket closed before hello_ack"));
+    socket.once("error", (err) => fail(`socket error: ${err.message}`));
+    setTimeout(() => fail("hello_ack timeout"), 5000);
+  });
+}
+
+// ---- Frame dispatch ---------------------------------------------------------
+
+function handleFrameForPeer(peer: Peer, frame: Message): void {
+  switch (frame.type) {
+    case "send":
+    case "notify": {
+      // The standalone build doesn't run an agent. Reject so the dialer
+      // surfaces a clear error instead of timing out.
+      const id = "id" in frame && typeof frame.id === "string" ? frame.id : undefined;
+      if (frame.type === "send") {
+        sendFrame(peer.socket, {
+          type: "send_result",
+          id: id ?? "",
+          ok: false,
+          error: "this build of telepathy does not run a local agent (no copilot extension); use telepathy_attach for terminal mirroring instead",
+          events: [],
+        });
+      } else {
+        // notify: ack so the sender's request resolves; otherwise no surface.
+        sendFrame(peer.socket, { type: "notify_ack", id: id ?? "" });
+        listeners.onNotify?.(peer, frame.message);
+      }
+      return;
+    }
+    case "send_result":
+    case "notify_ack":
+    case "pong":
+    case "error": {
+      const id = "id" in frame ? frame.id : undefined;
+      if (typeof id === "string") {
+        const pending = peer.pending.get(id);
+        if (pending) {
+          peer.pending.delete(id);
+          clearTimeout(pending.timer);
+          pending.resolve(frame);
+        }
+      }
+      return;
+    }
+    case "ping":
+      sendFrame(peer.socket, { type: "pong", id: frame.id });
+      return;
+    case "pty_subscribe": {
+      if (!localPty) {
+        sendFrame(peer.socket, {
+          type: "pty_subscribe_ack",
+          id: frame.id,
+          ok: false,
+          error: "no local PTY on this host",
+        });
+        return;
+      }
+      localPtyServingSubs.get(peer.alias)?.();
+      const onFrame = (f: { dataBase64: string }): void => {
+        sendFrame(peer.socket, { type: "pty_frame", dataBase64: f.dataBase64 });
+      };
+      const onResize = (s: { cols: number; rows: number }): void => {
+        sendFrame(peer.socket, { type: "pty_resize", cols: s.cols, rows: s.rows });
+      };
+      localPty.state.subscribers.add(onFrame);
+      localPty.state.resizeSubscribers.add(onResize);
+      localPtyServingSubs.set(peer.alias, () => {
+        localPty?.state.subscribers.delete(onFrame);
+        localPty?.state.resizeSubscribers.delete(onResize);
+      });
+      sendFrame(peer.socket, {
+        type: "pty_subscribe_ack",
+        id: frame.id,
+        ok: true,
+        cols: localPty.state.cols,
+        rows: localPty.state.rows,
+        replayBase64: localPty.state.ringBuffer.toString("base64"),
+      });
+      return;
+    }
+    case "pty_unsubscribe":
+      localPtyServingSubs.get(peer.alias)?.();
+      localPtyServingSubs.delete(peer.alias);
+      return;
+    case "pty_input":
+      // Remote peer sent keystrokes for our local PTY.
+      if (localPty) {
+        localPty.injectInput(frame.dataBase64);
+      }
+      return;
+    case "pty_frame":
+      // We are the watcher; the host is streaming frames to us.
+      listeners.onRemoteFrame?.(peer, frame.dataBase64);
+      return;
+    case "pty_resize":
+      if ("cols" in frame && "rows" in frame) {
+        const sub = remotePtySubs.get(peer.alias);
+        if (sub) {
+          sub.cols = frame.cols;
+          sub.rows = frame.rows;
+        }
+        listeners.onRemoteResize?.(peer, frame.cols, frame.rows);
+      }
+      return;
+    case "pty_subscribe_ack": {
+      // Reply to our outbound subscribe — surface size info to listeners.
+      if (frame.ok && typeof frame.cols === "number" && typeof frame.rows === "number") {
+        remotePtySubs.set(peer.alias, { id: frame.id, cols: frame.cols, rows: frame.rows });
+        if (frame.replayBase64) {
+          listeners.onRemoteFrame?.(peer, frame.replayBase64);
+        }
+        listeners.onRemoteResize?.(peer, frame.cols, frame.rows);
+      }
+      const pending = peer.pending.get(frame.id);
+      if (pending) {
+        peer.pending.delete(frame.id);
+        clearTimeout(pending.timer);
+        pending.resolve(frame);
+      }
+      return;
+    }
+    case "hello":
+    case "hello_ack":
+      // Already handled in adopt*; ignore late arrivals.
+      return;
+  }
+}
+
+// Public helpers for tools.ts to drive PTY ops on a peer.
+export function subscribeRemotePty(peer: Peer, requestId: string): void {
+  sendFrame(peer.socket, { type: "pty_subscribe", id: requestId });
+}
+
+export function unsubscribeRemotePty(peer: Peer): void {
+  remotePtySubs.delete(peer.alias);
+  sendFrame(peer.socket, { type: "pty_unsubscribe" });
+}
+
+export function sendRemoteInput(peer: Peer, dataBase64: string): void {
+  sendFrame(peer.socket, { type: "pty_input", dataBase64 });
+}
+
+// (handleSendRequest removed in standalone build — no agent layer)
+
+// ---- Helpers ---------------------------------------------------------------
+
+function makePeer(p: Omit<Peer, "status" | "connectedAt" | "pending">): Peer {
+  return {
+    ...p,
+    status: "connected",
+    connectedAt: Date.now(),
+    pending: new Map(),
+  };
+}
+
+// Re-implement frame reading here so we control routing per-socket. Mirrors
+// transport.attachFrameReader but exposes both first-frame and subsequent
+// frames to a single callback the orchestrator owns.
+import { createInterface } from "node:readline";
+
+function attachReader(socket: TLSSocket, onFrame: (frame: Frame) => void, onClose: () => void): void {
+  const rl = createInterface({ input: socket, crlfDelay: Infinity });
+  rl.on("line", (line) => {
+    if (!line) {
+      return;
+    }
+    let parsed: Frame;
+    try {
+      parsed = JSON.parse(line) as Frame;
+    } catch {
+      return;
+    }
+    onFrame(parsed);
+  });
+  rl.on("close", onClose);
+}
