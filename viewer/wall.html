@@ -285,7 +285,9 @@
         throw new Error("xterm.js failed to load (window.Terminal is undefined)");
       }
       term = new window.Terminal({
-        fontSize: 13, cursorBlink: true,
+        fontSize: 13,
+        fontFamily: '"CaskaydiaCove Nerd Font", "Cascadia Code NF", "Cascadia Code", "FiraCode Nerd Font", "FiraCode NF", "JetBrainsMono Nerd Font", "JetBrainsMono NF", "Hack Nerd Font", "MesloLGS NF", "Consolas", "Menlo", monospace',
+        cursorBlink: true,
         disableStdin: !peer.hasPty,
         theme: { background: "#0a0d12", foreground: "#cbd5e1" },
       });
