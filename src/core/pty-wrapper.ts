@@ -190,6 +190,32 @@ export async function startWrapper(opts: StartWrapperOptions): Promise<WrapperSt
     if (isDebug()) {
       process.stderr.write(`[telepathy/wrapper] pty.onExit fired (code=${e.exitCode}, signal=${e.signal})\n`);
     }
+    // Shutdown is racy: we're about to write a chunky mode-reset string
+    // to stdout, fan an "exit" frame out to every IPC subscriber, and
+    // call process.exit. Any of those writes can complete asynchronously
+    // with EAGAIN / EPIPE / ECONNRESET if the peer / parent's pipe is
+    // already half-closed. Each of those errors normally surfaces as an
+    // 'error' event on a node:net Socket; if no listener is attached at
+    // the moment the event fires, Node aborts with an "Unhandled 'error'
+    // event" trace and exits with code 1 — masking the child's real
+    // exit code with a scary stack the user didn't cause.
+    //
+    // We install a process-level uncaughtException trap for the duration
+    // of shutdown that swallows ONLY these benign write-time errors.
+    // Anything else still propagates (we don't want to hide real bugs).
+    const swallowShutdownWriteError = (err: unknown): void => {
+      const code = (err as { code?: string } | null)?.code;
+      const syscall = (err as { syscall?: string } | null)?.syscall;
+      if (syscall === "write" && (code === "EAGAIN" || code === "EPIPE" || code === "ECONNRESET")) {
+        return;
+      }
+      // Re-throw by removing ourselves and letting Node's default
+      // handler take over.
+      process.off("uncaughtException", swallowShutdownWriteError);
+      throw err;
+    };
+    process.on("uncaughtException", swallowShutdownWriteError);
+
     const exitMsg: WrapperToExtension = {
       type: "exit",
       code: e.exitCode ?? null,
@@ -269,6 +295,12 @@ export async function startWrapper(opts: StartWrapperOptions): Promise<WrapperSt
   const server = startIpcServer({
     pipePath: opts.pipePath,
     onClient: (socket) => {
+      // SAFETY: attach an error handler IMMEDIATELY (before sendIpc and
+      // before readIpc gets a chance to install its own). The very first
+      // hello write is asynchronous; if the peer dies between accept and
+      // the write completing, the resulting EAGAIN/EPIPE would surface as
+      // an unhandled 'error' on this Socket and crash the host.
+      socket.on("error", () => undefined);
       subscribers.add(socket);
       // Send the hello + replay so the new subscriber can paint immediately.
       const hello: WrapperToExtension = {
