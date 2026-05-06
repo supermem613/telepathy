@@ -9,4 +9,12 @@ export function secretToPsk(secret: Buffer): Buffer {
 }
 
 export const PSK_IDENTITY = "telepathy";
-export const PSK_CIPHERS = "PSK-CHACHA20-POLY1305:PSK-AES256-GCM-SHA384:PSK-AES128-GCM-SHA256";
+// Intersection of Node 22 OpenSSL and Electron 42 BoringSSL PSK ciphers.
+// We DON'T use the GCM variants (PSK-AES{128,256}-GCM-SHA*) because
+// BoringSSL omits them — including them caused NO_CIPHER_MATCH when
+// the dialer ran inside Electron and the listener inside Node.
+//
+// Order = preference. ECDHE-PSK-CHACHA20-POLY1305 is the modern AEAD
+// option both stacks support; the CBC entries are universally available
+// fallbacks for environments where ECDHE-PSK is disabled.
+export const PSK_CIPHERS = "ECDHE-PSK-CHACHA20-POLY1305:ECDHE-PSK-AES256-CBC-SHA:ECDHE-PSK-AES128-CBC-SHA:PSK-AES256-CBC-SHA:PSK-AES128-CBC-SHA";
