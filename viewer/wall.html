@@ -432,7 +432,7 @@
         throw new Error("xterm.js failed to load (window.Terminal is undefined)");
       }
       term = new window.Terminal({
-        fontSize: 13,
+        fontSize: 16,
         fontFamily: '"CaskaydiaCove Nerd Font", "Cascadia Code NF", "Cascadia Code", "FiraCode Nerd Font", "FiraCode NF", "JetBrainsMono Nerd Font", "JetBrainsMono NF", "Hack Nerd Font", "MesloLGS NF", "Consolas", "Menlo", monospace',
         cursorBlink: true,
         // Don't gate stdin on hasPty: even peers without PTY mirroring
