@@ -22,6 +22,7 @@ import type {
   Message,
 } from "./protocol.js";
 import type { Frame } from "./transport.js";
+import { isDebug } from "./debug.js";
 
 export type LocalPty = {
   state: {
@@ -323,6 +324,18 @@ function handleFrameForPeer(peer: Peer, frame: Message): void {
         localPty.injectInput(frame.dataBase64);
       }
       return;
+    case "pty_input_resize":
+      // Remote peer (viewer) is telling us their xterm dimensions.
+      // Resize our local PTY to match so TUIs render for the right
+      // viewport. No-op when no localPty (rare race; next subscribe-ack
+      // will report the still-stale size and the next resize fixes it).
+      if (isDebug()) {
+        process.stderr.write(`[telepathy/orch] pty_input_resize from ${peer.alias} ${frame.cols}x${frame.rows}\n`);
+      }
+      if (localPty) {
+        localPty.requestResize(frame.cols, frame.rows);
+      }
+      return;
     case "pty_frame":
       // We are the watcher; the host is streaming frames to us.
       listeners.onRemoteFrame?.(peer, frame.dataBase64);
@@ -373,6 +386,10 @@ export function unsubscribeRemotePty(peer: Peer): void {
 
 export function sendRemoteInput(peer: Peer, dataBase64: string): void {
   sendFrame(peer.socket, { type: "pty_input", dataBase64 });
+}
+
+export function sendRemoteResize(peer: Peer, cols: number, rows: number): void {
+  sendFrame(peer.socket, { type: "pty_input_resize", cols, rows });
 }
 
 function fireFirstPeerHooks(peer: Peer): void {

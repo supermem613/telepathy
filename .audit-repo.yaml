@@ -1,0 +1,65 @@
+name: telepathy
+
+# Source of truth: every CLI command is declared in src/cli.ts via
+# commander's `.command(...)` calls. Each match is a verb the README,
+# help text, and any other doc must mention.
+source_of_truth:
+  file: src/cli.ts
+  extractor: regex
+  # Capture the command name only (strip arg/option suffix).
+  pattern: '\.command\("([a-z][a-z-]*)'
+  sort: alphabetical
+
+# Files expected to mention every command.
+targets:
+  - file: README.md
+    section: { heading: "Commands" }
+    # Commands appear as bare tokens inside fenced bash blocks.
+    match: code_token
+
+# Strings that must no longer appear anywhere in the repo (with
+# allowlists where they're legitimately documented as removed/forbidden).
+stale_terms:
+  - term: TELEPATHY_DEBUG
+    reason: |
+      Removed in favor of the global `--debug` CLI flag. Env vars are
+      forbidden as configuration in this codebase (see custom rules).
+    allow_in:
+      # debug.ts intentionally calls out the forbidden env var by name
+      # in a comment to discourage future code from reaching for it.
+      - src/core/debug.ts
+
+  - term: 'press any key to start'
+    reason: |
+      Old hold-loop banner. Hold now uses an explicit Enter/Space
+      whitelist; banner reads "press Enter / Space to start the shell".
+
+  - term: 'Continuing without LAN exposure'
+    reason: |
+      Old EADDRINUSE fallthrough message. Replaced by a hard-fail with
+      offending-PID hint; we never silently continue without a listener.
+
+  - term: '0 peers'
+    reason: |
+      Old "#stats" footer string. Removed when the reload button took
+      its place on the top-right of the tabbar.
+
+  - term: '#0e1219'
+    reason: |
+      Old --bg-2 (slate). Replaced by pure-black palette (#0a0a0a tabbar,
+      #000000 content). All viewer styles should use the new vars.
+
+  - term: '#1f2937'
+    reason: |
+      Old --border (slate). Replaced by #1f1f1f in the pure-black palette.
+
+  - term: '#cbd5e1'
+    reason: |
+      Old --fg (slate). Replaced by #d4d4d4.
+
+# Generated artefacts and vendored bundles — never scan.
+exclude_globs:
+  - 'dist/**'
+  - 'node_modules/**'
+  - 'assets/**'
+  - 'viewer/static/**'

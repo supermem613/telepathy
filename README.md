@@ -1,6 +1,8 @@
 # telepathy
 
-> Peer-to-peer terminal sharing over the LAN: expose any process under ConPTY, watch from any other box
+> Peer-to-peer terminal sharing over the LAN: expose any process under ConPTY, watch from any other box.
+
+Two boxes on the same intranet. Box A runs `telepathy host` — its shell is now reachable on the LAN behind a TLS-PSK token. Box B runs `telepathy connect <token>` to mirror it in a browser wall (or `telepathy app` for the Electron wall with tabs, mouse selection, and renaming). No cloud, no port-forward, no shared session host.
 
 ## Quick start
 
@@ -12,11 +14,53 @@ npm run build
 npm link    # makes `telepathy` available globally
 ```
 
-## Commands
+Then on **box A** (the one whose shell you want to share):
 
 ```bash
-telepathy --help
-telepathy doctor          # health check (use --json for machine output)
+telepathy host
+# 📡 telepathy host ready
+#    bound: 0.0.0.0:7423
+#    addr:  192.168.1.69:7423
+#    token: TLP1YCUACRI477YZWUANC5FW66Y
+#    valid: 10 min
+#    waiting for a peer to connect, or press Enter / Space to start the shell now…
+```
+
+Copy the token. On **box B**:
+
+```bash
+telepathy app TLP1YCUACRI477YZWUANC5FW66Y   # opens the Electron wall pre-linked
+# OR
+telepathy connect TLP1YCUACRI477YZWUANC5FW66Y --term   # mirror in this terminal (Ctrl-] to detach)
+```
+
+Box A's shell spawns the moment a peer connects. From the wall: type into the active tab, watch frames stream in real time, double-click a tab label to rename it.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `telepathy host` | Wrap your shell (or any command after `--`) under ConPTY, bind a TLS-PSK listener, print a join token |
+| `telepathy connect <token>` | Link to a host's wall in a browser (default), or mirror it in this terminal with `--term` |
+| `telepathy app [tokens...]` | Open the Electron wall viewer; auto-links any tokens passed as args |
+| `telepathy peers` | List active peer links and the local listener (if any) — `--json` for scripting |
+| `telepathy disconnect [peer]` | Tear down one peer link by alias, or all peers when no arg is given |
+| `telepathy doctor` | Preflight: node version, node-pty availability, default port reachability, browser launcher |
+| `telepathy install-shortcut` | Windows-only: create a Start-menu shortcut for `telepathy app` you can pin to taskbar (`--uninstall` to remove) |
+
+Bare `telepathy` prints version + the full help. `telepathy <command> --help` for per-command flags. `telepathy --debug <command>` enables verbose stderr traces from the orchestrator and PTY wrapper.
+
+### Common flag patterns
+
+```bash
+telepathy host -p 7430                                # different port (when 7423 is busy)
+telepathy host --no-listen -- node my-tui.js          # wrap a command without exposing it on the LAN
+telepathy host -- pwsh -NoProfile                     # wrap a specific shell (everything after `--` is the child command)
+telepathy connect <token> --as box-a                  # rename the local peer alias
+telepathy connect <token> --term                      # raw stdin/stdout PTY mirror; Ctrl-] to detach
+telepathy peers --json                                # machine-readable peer list
+telepathy disconnect captain                          # disconnect just the "captain" peer
+telepathy doctor                                      # check the install
 ```
 
 ## Conventions
@@ -25,35 +69,48 @@ telepathy doctor          # health check (use --json for machine output)
   Add a runtime dep only with a clear reason — every dep is supply-chain risk.
 - **`doctor` first.** Every CLI ships a `doctor` command that returns
   `CheckResult[]` (name, ok, detail, hint). Hints carry remediation text.
-- **`--json` everywhere.** Any command that produces output supports
-  `--json` for machine-readable mode.
+- **`--json` everywhere** that produces output meant for scripting (`peers`,
+  `disconnect`, `doctor`).
 - **Plan → preview → confirm → apply** for any command that mutates state on
   disk or remote. Silent auto-apply is an anti-pattern.
+- **No env vars for behavior.** Everything is CLI-flag driven (`--debug`,
+  `--port`, `--bind`, etc.). Env vars are invisible global state.
 
 ## Development
 
 ```bash
 npm run build               # tsc -> dist/
-npm run lint                # type-check (src + test)
-npm test                    # all tests
-npm run test:unit           # unit only
-npm run test:integration    # integration only
+npm run lint                # eslint + tsc --noEmit (src + test)
+npm test                    # all tests (unit + integration; ~28s on Windows)
+npm run test:unit           # unit only (fast, hermetic)
+npm run test:integration    # Electron + ConPTY end-to-end (slower)
 npm run clean               # remove dist/
 ```
 
 CI runs on Ubuntu + Windows via GitHub Actions (`.github/workflows/ci.yml`).
 
+→ Test conventions and runner internals: [`docs/testing.md`](docs/testing.md)
+
 ## Project structure
 
 ```
 src/
-  cli.ts              # Entry point — Commander.js program
-  commands/           # One file per CLI command
+  cli.ts                  Entry point — Commander.js dispatcher
+  commands/               One file per CLI verb (host, connect, app, peers, …)
+  core/                   Orchestrator, transport (TLS-PSK), PTY wrapper, IPC, viewer
+electron/
+  main.cjs                Electron shell + in-process wall HTTP+WS server
+viewer/
+  wall.html               Tabbed multi-peer viewer (xterm.js + WebSocket per tab)
+  peer.html               Single-peer attach view
+assets/
+  icon.png / icon.ico     App icon (regenerated by scripts/generate-icon.py)
+scripts/
+  generate-icon.py        Pillow-based icon generator
 test/
-  run.mjs             # Cross-platform test runner (HOME-sandboxed)
-  tsconfig.json       # Test type-check config
-  unit/               # Unit tests (*.test.ts)
-  integration/        # Integration tests (*.test.ts)
+  unit/                   Unit tests (*.test.ts) — HOME-sandboxed
+  integration/            Playwright + ConPTY end-to-end tests
+  run.mjs                 Cross-platform test runner
 ```
 
 ## License

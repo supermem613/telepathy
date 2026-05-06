@@ -10,6 +10,8 @@ import { runConnect } from "./commands/connect.js";
 import { runApp } from "./commands/app.js";
 import { runPeers, runDisconnect } from "./commands/peers.js";
 import { runDoctor } from "./commands/doctor.js";
+import { runInstallShortcut } from "./commands/install-shortcut.js";
+import { setDebug } from "./core/debug.js";
 
 const pkgPath = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
 const VERSION = (JSON.parse(readFileSync(pkgPath, "utf8")) as { version: string }).version;
@@ -18,15 +20,24 @@ const program = new Command();
 program
   .name("telepathy")
   .description("Peer-to-peer terminal sharing over the LAN")
-  .version(VERSION);
+  .version(VERSION)
+  // Global --debug enables verbose stderr traces from the orchestrator,
+  // pty-wrapper, hold loop, etc. Wired through src/core/debug.ts so the
+  // setting is process-wide without touching env vars.
+  .option("--debug", "Enable verbose diagnostic logging to stderr")
+  .hook("preAction", (thisCommand) => {
+    if (thisCommand.opts().debug) {
+      setDebug(true);
+    }
+  });
 
 program
   .command("host")
-  .description("Wrap a process under a ConPTY and expose its terminal to peers (default cmd: your shell)")
-  .option("-p, --port <port>", "TCP port to listen on", (v) => parseInt(v, 10))
-  .option("-b, --bind <host>", "Interface to bind to (default: detected LAN IPv4)")
+  .description("Wrap a shell (or any command after `--`) under a ConPTY and expose it to peers")
+  .option("-p, --port <port>", "TCP port to listen on (default: 7423)", (v) => parseInt(v, 10))
+  .option("-b, --bind <host>", "Interface to bind to (default: 0.0.0.0 — all interfaces)")
   .option("-a, --advertise <host>", "IP encoded into the join token (default: detected LAN IPv4)")
-  .option("--no-listen", "Run wrapper without binding a peer listener")
+  .option("--no-listen", "Run the wrapper without binding a peer listener (local-only)")
   .allowUnknownOption(true)
   .allowExcessArguments(true)
   .action(async (options) => {
@@ -43,23 +54,23 @@ program
 
 program
   .command("connect <token>")
-  .description("Link to a host using its join token (default: opens browser viewer)")
-  .option("--as <alias>", "Custom local alias for this peer")
-  .option("--term", "Mirror in the current terminal instead of opening a browser (not yet implemented)")
+  .description("Link to a host using its TLP1 join token (browser wall by default; --term for in-terminal mirror)")
+  .option("--as <alias>", "Custom local alias for this peer (default: derived from host's hostname)")
+  .option("--term", "Mirror the remote PTY in this terminal instead of opening the wall (use Ctrl-] to detach)")
   .action(async (token: string, options) => {
     await runConnect({ token, alias: options.as, term: options.term });
   });
 
 program
   .command("app [tokens...]")
-  .description("Open the Electron wall viewer (multi-tab, resizable, pulse-on-activity)")
+  .description("Open the Electron wall viewer; auto-links any tokens passed as args (multi-tab, mouse-clickable)")
   .action(async (tokens: string[]) => {
     await runApp({ tokens });
   });
 
 program
   .command("peers")
-  .description("List active links and the local listener (if any)")
+  .description("List active peer links and the local listener (if any)")
   .option("--json", "Machine-readable output")
   .action((options) => {
     runPeers({ json: options.json });
@@ -67,7 +78,7 @@ program
 
 program
   .command("disconnect [peer]")
-  .description("Tear down one or all peer links")
+  .description("Tear down one peer link (by alias) or all peers (no arg)")
   .option("--json", "Machine-readable output")
   .action((peer: string | undefined, options) => {
     runDisconnect({ peer, json: options.json });
@@ -75,10 +86,18 @@ program
 
 program
   .command("doctor")
-  .description("Preflight: node version, node-pty, default port, browser")
+  .description("Preflight checks: node version, node-pty availability, default port, browser launcher")
   .option("--json", "Machine-readable output")
   .action(async (options) => {
     await runDoctor({ json: options.json });
+  });
+
+program
+  .command("install-shortcut")
+  .description("Windows: install (or --uninstall) a Start-menu shortcut for `telepathy app` you can pin to taskbar")
+  .option("--uninstall", "Remove the shortcut instead of creating it")
+  .action(async (options) => {
+    await runInstallShortcut({ uninstall: options.uninstall });
   });
 
 // Bare `telepathy` (no args) prints version + full help. Matches the

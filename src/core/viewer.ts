@@ -16,6 +16,7 @@ import {
   subscribeRemotePty,
   unsubscribeRemotePty,
   sendRemoteInput,
+  sendRemoteResize,
 } from "./orchestrator.js";
 import { listPeers, getPeer, type Peer } from "./peers.js";
 import { connectPeer, disconnectPeer } from "./api.js";
@@ -190,6 +191,11 @@ function attachWatcher(alias: string, peer: Peer, ws: WebSocket): void {
       // the wire (the host will decode and inject directly into the PTY).
       const dataBase64 = Buffer.from(msg.data, "utf8").toString("base64");
       sendRemoteInput(peer, dataBase64);
+    } else if (msg.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
+      // Browser xterm fitted/resized — tell the host's PTY so TUIs render
+      // for the right viewport (Copilot CLI's bottom-anchored prompt is
+      // the canary; without this it draws off-screen).
+      sendRemoteResize(peer, msg.cols, msg.rows);
     }
   });
   ws.on("close", () => {

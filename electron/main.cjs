@@ -73,16 +73,26 @@ async function startWallServer() {
 
 function createWindow(url) {
   diag("createWindow");
-  // center:true is mandatory on multi-monitor setups — without it
-  // Electron can place the window at out-of-range coords if any attached
-  // monitor uses negative coords. The window opens fine but the user
-  // can't see it.
+  // Sized for a comfortable 132×40-ish terminal at 13px font with a
+  // little chrome budget. Copilot CLI's TUI sets minimum useful sizes
+  // around this; smaller windows clip its bottom-anchored prompt bar.
+  //
+  // minWidth/minHeight are sized so a Copilot CLI / vim / similar TUI
+  // ALWAYS has enough viewport for its bottom-anchored chrome to render
+  // (~100 cols × ~28 rows at 13px Nerd Font ≈ 800×580 incl. tab strip).
+  // We never let the user shrink below this; the bidirectional PTY-size
+  // sync means the host TUI would otherwise reflow into a too-small box
+  // and the prompt bar would draw off-screen.
+  const iconPath = path.join(__dirname, "..", "assets", "icon.png");
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 760,
+    width: 1280,
+    height: 800,
+    minWidth: 820,
+    minHeight: 600,
     center: true,
     title: "telepathy",
-    backgroundColor: "#0a0d12",
+    icon: fs.existsSync(iconPath) ? iconPath : undefined,
+    backgroundColor: "#000000",
     autoHideMenuBar: true,
     webPreferences: {
       contextIsolation: true,

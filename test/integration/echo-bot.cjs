@@ -6,9 +6,17 @@
 //   wrapper IPC → ConPTY → child stdin → child stdout → ConPTY frame →
 //   wrapper IPC → orchestrator → ws → xterm.write
 //
+// Special commands:
+//   QUIT      — exit cleanly
+//   SIZE      — emit "size:<cols>x<rows>" using the bot's current PTY size
+//
 // Run as: node test/integration/echo-bot.cjs
 process.stdout.write("ECHO_BOT_READY\n");
 process.stdin.setEncoding("utf8");
+// Re-print size on SIGWINCH so callers can observe a resize landing.
+process.stdout.on("resize", () => {
+  process.stdout.write(`resize:${process.stdout.columns}x${process.stdout.rows}\n`);
+});
 let buf = "";
 process.stdin.on("data", (chunk) => {
   buf += chunk;
@@ -18,8 +26,11 @@ process.stdin.on("data", (chunk) => {
     buf = buf.slice(nl + 1);
     if (line === "QUIT") {
       process.exit(0);
+    } else if (line === "SIZE") {
+      process.stdout.write(`size:${process.stdout.columns}x${process.stdout.rows}\n`);
+    } else {
+      process.stdout.write(`echo:${line}\n`);
     }
-    process.stdout.write(`echo:${line}\n`);
   }
 });
 process.stdin.on("end", () => process.exit(0));

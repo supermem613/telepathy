@@ -96,6 +96,17 @@ export type PtyResizeMessage = {
   rows: number;
 };
 
+// Sent by the dialer (viewer) to the host when xterm resizes, so the
+// host's PTY can match. Without this the host renders for whatever
+// cols/rows the wrapper allocated at startup, and TUI apps with
+// bottom-anchored prompts (Copilot CLI, htop, vim) draw their UI off
+// the actual visible viewport.
+export type PtyInputResizeMessage = {
+  type: "pty_input_resize";
+  cols: number;
+  rows: number;
+};
+
 export type PtyUnsubscribeMessage = {
   type: "pty_unsubscribe";
 };
@@ -115,6 +126,7 @@ export type Message =
   | PtyFrameMessage
   | PtyInputMessage
   | PtyResizeMessage
+  | PtyInputResizeMessage
   | PtyUnsubscribeMessage;
 
 export const PROTOCOL_VERSION = 1;

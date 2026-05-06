@@ -8,6 +8,7 @@
 // passthrough and emits a friendly diagnostic.
 
 import { startIpcServer, sendIpc, readIpc, type WrapperToExtension, type ExtensionToWrapper } from "./ipc.js";
+import { isDebug } from "./debug.js";
 import type { Server, Socket } from "node:net";
 
 export type Pty = {
@@ -109,6 +110,9 @@ export async function startWrapper(opts: StartWrapperOptions): Promise<WrapperSt
   });
 
   pty.onExit((e) => {
+    if (isDebug()) {
+      process.stderr.write(`[telepathy/wrapper] pty.onExit fired (code=${e.exitCode}, signal=${e.signal})\n`);
+    }
     const exitMsg: WrapperToExtension = {
       type: "exit",
       code: e.exitCode ?? null,
@@ -122,19 +126,44 @@ export async function startWrapper(opts: StartWrapperOptions): Promise<WrapperSt
       }
     }
     if (attachStdio && process.stdout.isTTY) {
-      // Clear the screen + scrollback + reset cursor when the wrapped
-      // shell exits, so the user's terminal returns to a clean state
-      // (no leftover banner, no leftover shell history) instead of
-      // sitting at the bottom of whatever the shell drew last.
-      //   \x1b[2J  — erase entire screen
-      //   \x1b[3J  — erase saved scrollback
-      //   \x1b[H   — move cursor to home (0,0)
-      process.stdout.write("\x1b[2J\x1b[3J\x1b[H");
+      // Restore the terminal to a clean state when the wrapped shell
+      // exits. The wrapped TUI (Copilot CLI, vim, oh-my-posh + clink,
+      // etc.) commonly enables modes the shell doesn't disable on exit
+      // — leaving the user's terminal stuck (mouse-select-to-copy
+      // broken, keys arriving as escape sequences, alt-screen content
+      // visible). The next `telepathy host` (or any subsequent shell
+      // command) inherits this broken state. We force-reset every mode
+      // we know about, then clear the screen + scrollback.
+      //
+      // Mode resets (DECRST sequences):
+      //   ?1000l ?1002l ?1003l — disable mouse tracking variants
+      //   ?1006l ?1015l        — disable SGR / urxvt mouse encoding
+      //   ?1004l               — disable focus reporting
+      //   ?2004l               — disable bracketed paste
+      //   ?9001l               — disable win32-input-mode
+      //   ?1049l ?47l ?1047l   — exit alternate screen buffer (all variants)
+      //   ?25h                 — show cursor (some TUIs hide it)
+      //   ?7h                  — re-enable line wrap
+      // Then:
+      //   \x1b[2J \x1b[3J \x1b[H — erase screen, erase scrollback, home cursor
+      //   \x1b[0m              — reset all SGR attributes (color, bold, ...)
+      process.stdout.write(
+        "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1015l" +
+        "\x1b[?1004l\x1b[?2004l\x1b[?9001l" +
+        "\x1b[?1049l\x1b[?47l\x1b[?1047l" +
+        "\x1b[?25h\x1b[?7h" +
+        "\x1b[0m\x1b[2J\x1b[3J\x1b[H",
+      );
     }
     if (opts.onChildExit) {
       opts.onChildExit(e.exitCode ?? null, exitMsg.signal);
     } else {
+      // Belt-and-suspenders: process.exit should fire immediately, but
+      // if some hold-the-loop-open native handle ignores it (rare,
+      // node-pty + open TLS sockets have done this before), force-kill
+      // ourselves a beat later. The user typed `exit` — they want out.
       process.exit(e.exitCode ?? 0);
+      setTimeout(() => process.kill(process.pid, "SIGKILL"), 1500).unref();
     }
   });
 
@@ -193,10 +222,13 @@ export async function startWrapper(opts: StartWrapperOptions): Promise<WrapperSt
           const data = Buffer.from(msg.dataBase64, "base64");
           pty.write(data.toString("utf8"));
         } else if (msg.type === "resize") {
+          if (isDebug()) {
+            process.stderr.write(`[telepathy/wrapper] resize ${msg.cols}x${msg.rows}\n`);
+          }
           try {
             pty.resize(msg.cols, msg.rows);
           } catch {
-            // ignore
+            // Some terminals don't support resize; ignore.
           }
         }
       }, () => {

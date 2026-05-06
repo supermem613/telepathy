@@ -6,12 +6,17 @@
 <link rel="stylesheet" href="/static/xterm.css?t={{TOKEN}}" />
 <style>
   * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; height: 100%; background: #0a0d12; color: #cbd5e1; font-family: ui-sans-serif, system-ui, sans-serif; }
-  header { padding: 6px 10px; background: #0e1219; border-bottom: 1px solid #1f2937; font-size: 13px; display: flex; gap: 12px; align-items: center; }
+  html, body { margin: 0; padding: 0; height: 100%; background: #000000; color: #d4d4d4; font-family: ui-sans-serif, system-ui, sans-serif; }
+  header { padding: 6px 10px; background: #0a0a0a; border-bottom: 1px solid #1f1f1f; font-size: 13px; display: flex; gap: 12px; align-items: center; }
   header .alias { font-weight: 600; color: #e5e7eb; }
   header .dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; }
   header .hint { margin-left: auto; color: #94a3b8; font-size: 12px; }
   #term-host { height: calc(100% - 32px); padding: 6px; }
+  .xterm-viewport::-webkit-scrollbar { width: 8px; }
+  .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
+  .xterm-viewport::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 4px; }
+  .xterm-viewport::-webkit-scrollbar-thumb:hover { background: #3a3a3a; }
+  body::-webkit-scrollbar { display: none; }
 </style>
 </head>
 <body>
@@ -33,13 +38,24 @@
     fontSize: 13,
     fontFamily: '"CaskaydiaCove Nerd Font", "Cascadia Code NF", "Cascadia Code", "FiraCode Nerd Font", "FiraCode NF", "JetBrainsMono Nerd Font", "JetBrainsMono NF", "Hack Nerd Font", "MesloLGS NF", "Consolas", "Menlo", monospace',
     cursorBlink: true,
-    theme: { background: "#0a0d12", foreground: "#cbd5e1" },
+    theme: { background: "#000000", foreground: "#d4d4d4" },
   });
   const fit = new window.FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(document.getElementById("term-host"));
   fit.fit();
   const ws = new WebSocket(`${location.origin.replace("http", "ws")}/ws/${encodeURIComponent(alias)}?t=${encodeURIComponent(TOKEN)}`);
+  function sendResize() {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    try { ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows })); } catch (_) { /* ignore */ }
+    // Same rationale as wall.html: the host's TUI uses absolute cursor
+    // positioning, so a resize without a screen-clear leaves stale rows
+    // behind from the pre-resize layout. Clearing forces the host's
+    // SIGWINCH-triggered redraw to paint over a clean buffer.
+    try { term.reset(); } catch (_) { /* ignore */ }
+  }
+  ws.onopen = () => { sendResize(); };
+  term.onResize(sendResize);
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
     if (msg.type === "frame") {
@@ -61,7 +77,7 @@
       ws.send(JSON.stringify({ type: "input", data }));
     }
   });
-  window.addEventListener("resize", () => fit.fit());
+  window.addEventListener("resize", () => { try { fit.fit(); } catch (_) {} });
 })();
 </script>
 </body>

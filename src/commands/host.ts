@@ -13,6 +13,7 @@
 //   5. Drain any queued pty_subscribes — peers see the shell from frame 0
 
 import { hostname } from "node:os";
+import { execSync } from "node:child_process";
 import { startWrapper } from "../core/pty-wrapper.js";
 import {
   acceptStart,
@@ -22,6 +23,7 @@ import {
 import { onFirstPeerConnect } from "../core/orchestrator.js";
 import { attachToWrapperIfPresent } from "./host-pty-shim.js";
 import { buildPipePath } from "../core/ipc.js";
+import { isDebug } from "../core/debug.js";
 import chalk from "chalk";
 
 export type HostOptions = AcceptOptions & {
@@ -29,6 +31,34 @@ export type HostOptions = AcceptOptions & {
   args?: string[];
   noListen?: boolean;       // skip listener; just wrap the process locally
 };
+
+// Find what's holding a TCP port (Windows / Linux / macOS). Best-effort —
+// returns a human-readable string like "node.exe (pid 12345)" or undefined
+// if nothing matches or we can't probe (no permissions, missing tooling).
+// Used purely for the EADDRINUSE error message; never throws.
+function describePortHolder(port: number): string | undefined {
+  try {
+    if (process.platform === "win32") {
+      const out = execSync(`powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess"`, { stdio: ["ignore", "pipe", "ignore"], timeout: 3000 }).toString().trim();
+      const holderPid = Number(out);
+      if (!Number.isFinite(holderPid) || holderPid <= 0) {
+        return undefined;
+      }
+      const nameOut = execSync(`powershell -NoProfile -Command "(Get-Process -Id ${holderPid} -ErrorAction SilentlyContinue).ProcessName"`, { stdio: ["ignore", "pipe", "ignore"], timeout: 3000 }).toString().trim();
+      return `${nameOut || "process"} (pid ${holderPid})`;
+    }
+    // POSIX: lsof -tiTCP:<port> -sTCP:LISTEN
+    const out = execSync(`lsof -tiTCP:${port} -sTCP:LISTEN 2>/dev/null | head -n 1`, { stdio: ["ignore", "pipe", "ignore"], timeout: 3000, shell: "/bin/sh" }).toString().trim();
+    const holderPid = Number(out);
+    if (!Number.isFinite(holderPid) || holderPid <= 0) {
+      return undefined;
+    }
+    const nameOut = execSync(`ps -o comm= -p ${holderPid} 2>/dev/null`, { stdio: ["ignore", "pipe", "ignore"], timeout: 3000, shell: "/bin/sh" }).toString().trim();
+    return `${nameOut || "process"} (pid ${holderPid})`;
+  } catch {
+    return undefined;
+  }
+}
 
 export async function runHost(opts: HostOptions): Promise<void> {
   const { command, args } = resolveCommand(opts);
@@ -48,7 +78,35 @@ export async function runHost(opts: HostOptions): Promise<void> {
       expiresInSec = result.expiresInSec;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(chalk.yellow(`telepathy host: peer listener failed (${msg}). Continuing without LAN exposure.\n`));
+      // EADDRINUSE is the #1 cause of "telepathy host hangs on second run":
+      // a prior host (or some unrelated process) is still bound to 7423.
+      // Bail loudly with a fix path instead of silently falling through to
+      // the keypress hold — that hold has no token banner and looks like
+      // a hang.
+      if (/EADDRINUSE/i.test(msg)) {
+        const port = opts.port ?? 7423;
+        const holder = describePortHolder(port);
+        process.stderr.write(chalk.red(`telepathy host: port ${port} is already in use`));
+        if (holder) {
+          process.stderr.write(chalk.red(` by ${holder}`));
+        }
+        process.stderr.write(chalk.red(`.\n\n`));
+        process.stderr.write(chalk.dim(`A previous \`telepathy host\` may still be running, or another app is bound to ${port}.\n`));
+        process.stderr.write(chalk.dim(`Fixes:\n`));
+        if (holder) {
+          const m = /pid (\d+)/.exec(holder);
+          if (m) {
+            process.stderr.write(chalk.dim(`  • kill the holder:  Stop-Process -Id ${m[1]} -Force        (Windows)\n`));
+            process.stderr.write(chalk.dim(`                      kill ${m[1]}                                 (POSIX)\n`));
+          }
+        }
+        process.stderr.write(chalk.dim(`  • use a different port:  telepathy host -p 7430\n`));
+        process.exit(1);
+      }
+      // Other errors (e.g. permission denied on a privileged port) — same
+      // story: a hold without a token is useless. Surface the real error.
+      process.stderr.write(chalk.red(`telepathy host: failed to bind listener (${msg})\n`));
+      process.exit(1);
     }
     await holdForFirstPeerOrKeypress({ expiresInSec });
   }
@@ -69,34 +127,86 @@ export async function runHost(opts: HostOptions): Promise<void> {
 
   const localPty = await attachToWrapperIfPresent(pipePath);
   setLocalPty(localPty);
+
+  // Top-level SIGINT/SIGTERM — last-resort escape hatch. Once the shell
+  // is spawned, raw-mode stdin delivers Ctrl-C bytes to the child rather
+  // than as a SIGINT signal to us, so this rarely fires for user Ctrl-C.
+  // It DOES fire when:
+  //   - Parent terminal sends SIGTERM (taskkill /pid, kill, IDE close)
+  //   - The wrapped shell hangs and the user runs `Stop-Process -Id` from
+  //     elsewhere with the friendlier signal first
+  // Without this handler, those signals would leave node's TLS server
+  // and PTY pipes orphaned for ~seconds before the OS hard-killed us.
+  const onSignal = (sig: NodeJS.Signals): void => {
+    if (isDebug()) {
+      process.stderr.write(`[telepathy/host] ${sig} received — exiting\n`);
+    }
+    try {
+      localPty?.close(); 
+    } catch { /* ignore */ }
+    process.exit(sig === "SIGINT" ? 130 : 0);
+  };
+  process.once("SIGINT", () => onSignal("SIGINT"));
+  process.once("SIGTERM", () => onSignal("SIGTERM"));
+  process.once("SIGHUP", () => onSignal("SIGHUP"));
 }
 
 // Race "first peer connects" against "user presses any key". Resolves on
 // whichever happens first. Idempotent — both branches clean up the other.
-// Decide whether a stdin chunk should count as a deliberate user keypress
-// when we're holding before spawning the shell. Exported so tests can pin
-// the policy: terminal-generated escape sequences (focus events, mouse
-// events, arrow keys, bracketed paste, cursor reports) must NOT count,
-// because in raw mode terminals emit them constantly (e.g. on every
-// alt-tab) and the user would never get a chance to actually wait.
+// Decide whether a stdin chunk should count as a deliberate user action
+// during the hold. Whitelist-only — only specific keys count, everything
+// else is silently dropped.
 //
-// A standalone ESC press (single 0x1b byte) IS treated as a key.
+// This avoids the rabbit-hole of trying to filter terminal noise (focus
+// events, mouse events, win32-input-mode, etc.) — modern terminals emit
+// dozens of byte sequences for things the user didn't intend, and any
+// blacklist will eventually be wrong. A whitelist is bulletproof.
 //
-// Returns "abort" for Ctrl-C (caller should exit 130), "key" for a real
-// keypress, or "ignore" for anything we should not treat as user intent.
+// Whitelist:
+//   • Ctrl-C (0x03) → abort
+//   • Enter (CR 0x0D or LF 0x0A) → start
+//   • Space (0x20) → start
+//
+// All other bytes / sequences → ignore.
+//
+// Returns "abort" for Ctrl-C (caller exits 130), "key" for Enter/Space
+// (caller spawns shell), "ignore" for anything else.
 export type KeyClass = "key" | "abort" | "ignore";
 
 export function classifyHoldInput(chunk: Buffer): KeyClass {
   if (chunk.length === 0) {
     return "ignore";
   }
-  if (chunk[0] === 0x03) {
+  // Ctrl-C anywhere in the chunk → abort. (win32-input-mode encodes
+  // Ctrl-C as a longer escape sequence; cover both raw and encoded.)
+  if (chunk.includes(0x03)) {
     return "abort";
   }
-  if (chunk[0] === 0x1b && chunk.length > 1) {
-    return "ignore";
+  // Single-byte Enter (CR or LF) or Space → start.
+  if (chunk.length === 1) {
+    const b = chunk[0]!;
+    if (b === 0x0d || b === 0x0a || b === 0x20) {
+      return "key";
+    }
   }
-  return "key";
+  // Win32-input-mode wraps Enter and Space in a CSI sequence too. Detect
+  // the unicode-codepoint field (3rd ;-separated number after `ESC[`):
+  //   `ESC[<Vk>;<Sc>;<Uc>;<Kd>;<Cs>;<Rc>_`
+  // Match key-DOWN (Kd=1) for Enter (Uc=13), LF (Uc=10), or Space (Uc=32).
+  if (chunk.length >= 4 && chunk[0] === 0x1b && chunk[1] === 0x5b) {
+    const text = chunk.toString("utf8");
+    // ESC character (0x1b) expressed via String.fromCharCode to avoid a
+    // literal control char in a regex literal (eslint no-control-regex).
+    const m = new RegExp(`^${String.fromCharCode(0x1b)}\\[(\\d+);(\\d+);(\\d+);(\\d+);`).exec(text);
+    if (m) {
+      const uc = Number(m[3]);
+      const kd = Number(m[4]);
+      if (kd === 1 && (uc === 13 || uc === 10 || uc === 32)) {
+        return "key";
+      }
+    }
+  }
+  return "ignore";
 }
 
 function holdForFirstPeerOrKeypress(opts: { expiresInSec?: number } = {}): Promise<"peer" | "key" | "expired"> {
@@ -127,6 +237,9 @@ function holdForFirstPeerOrKeypress(opts: { expiresInSec?: number } = {}): Promi
 
     const onKey = (chunk: Buffer): void => {
       const cls = classifyHoldInput(chunk);
+      if (isDebug()) {
+        process.stderr.write(chalk.dim(`[telepathy/hold] stdin ${chunk.length}B [${[...chunk].slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join(" ")}] → ${cls}\n`));
+      }
       if (cls === "abort") {
         abort(chalk.dim("\n(aborted)"), 130);
         return;
@@ -159,12 +272,21 @@ function holdForFirstPeerOrKeypress(opts: { expiresInSec?: number } = {}): Promi
 
     const wasRaw = process.stdin.isTTY ? process.stdin.isRaw : false;
     if (process.stdin.isTTY) {
-      process.stdin.setRawMode(true);
+      try {
+        process.stdin.setRawMode(true);
+        if (isDebug()) {
+          process.stderr.write(chalk.dim(`[telepathy/hold] stdin: TTY=true, setRawMode(true) ok, isRaw=${process.stdin.isRaw}\n`));
+        }
+      } catch (err) {
+        process.stderr.write(chalk.yellow(`[telepathy/hold] setRawMode failed: ${err instanceof Error ? err.message : String(err)} — keypress detection may not work\n`));
+      }
+    } else if (isDebug()) {
+      process.stderr.write(chalk.dim(`[telepathy/hold] stdin: TTY=false (no raw mode)\n`));
     }
     process.stdin.resume();
     process.stdin.on("data", onKey);
 
-    process.stderr.write(chalk.dim(`   waiting for a peer to connect, or press any key to start the shell now...\n`));
+    process.stderr.write(chalk.dim(`   waiting for a peer to connect, or press Enter / Space to start the shell now...\n`));
     process.stderr.write(chalk.dim(`   (Ctrl-C to abort)\n`));
 
     function cleanup(): void {

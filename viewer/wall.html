@@ -6,17 +6,20 @@
 <link rel="stylesheet" href="/static/xterm.css?t={{TOKEN}}" />
 <style>
   :root {
-    --bg: #0a0d12;
-    --bg-2: #0e1219;
-    --border: #1f2937;
+    --bg: #000000;          /* pure black — terminal area */
+    --bg-2: #0a0a0a;        /* tabbar — subtly lifted from content */
+    --bg-3: #141414;        /* inactive tab fill */
+    --border: #1f1f1f;
+    --border-soft: #161616;
     --border-active: #38bdf8;
-    --fg: #cbd5e1;
-    --fg-dim: #94a3b8;
-    --fg-strong: #e5e7eb;
+    --fg: #d4d4d4;
+    --fg-dim: #888888;
+    --fg-strong: #f5f5f5;
     --accent: #38bdf8;
-    --pulse: #22c55e;
-    --idle: #475569;
-    --offline: #ef4444;
+    --idle: #22c55e;        /* green — connected, no recent traffic */
+    --busy: #f59e0b;        /* amber — frames flowing, command running */
+    --offline: #ef4444;     /* red — disconnected / errored */
+    --dim: #3a3a3a;         /* gray — never-connected placeholder */
   }
   * { box-sizing: border-box; }
   html, body {
@@ -25,66 +28,148 @@
     font-family: ui-sans-serif, system-ui, sans-serif;
     overflow: hidden;
   }
+  /* TABBAR — Chrome/Edge-style: dark bar, tabs sit on top with the
+     active tab visually merging into the content area below. No bottom
+     hairline — the contrast between tabbar bg (--bg-2) and content bg
+     (--bg, pure black) provides the separation, and the active tab's
+     pure-black fill reads as a continuous extension of the terminal. */
   #tabbar {
     display: flex; align-items: stretch;
-    background: var(--bg-2); border-bottom: 1px solid var(--border);
-    height: 36px; padding: 0 4px;
+    background: var(--bg-2);
+    height: 40px; padding: 6px 8px 0 8px;
     user-select: none;
+    gap: 4px;
+  }
+  /* #tabs is the inner row that holds the .tab elements. Without its
+     own flex stretch, .tab children fall back to content height and
+     leave a visible band of tabbar bg below them. */
+  #tabs {
+    display: flex; align-items: stretch;
+    gap: 1px;
+    min-width: 0;
   }
   .tab {
-    display: flex; align-items: center; gap: 8px;
-    padding: 0 10px 0 12px;
-    border-right: 1px solid var(--border);
+    display: flex; align-items: center; gap: 9px;
+    padding: 0 10px 0 14px;
     cursor: pointer;
     font-size: 13px;
     color: var(--fg-dim);
-    background: var(--bg-2);
-    min-width: 120px; max-width: 240px;
+    background: var(--bg-3);
+    min-width: 150px; max-width: 240px;
     position: relative;
+    border-radius: 8px 8px 0 0;
+    transition: background 120ms, color 120ms;
   }
-  .tab:hover { color: var(--fg-strong); background: #11161f; }
-  .tab.active { color: var(--fg-strong); background: var(--bg); border-bottom: 2px solid var(--border-active); }
+  .tab:hover { color: var(--fg-strong); background: #1c1c1c; }
+  .tab.active {
+    color: var(--fg-strong);
+    background: var(--bg);
+  }
+  /* Cyan top accent bar on the active tab. */
+  .tab.active::before {
+    content: ""; position: absolute; left: 8px; right: 8px; top: 0;
+    height: 2px; background: var(--accent); border-radius: 2px;
+    box-shadow: 0 0 8px rgba(56,189,248,0.5);
+  }
   .tab .label {
     flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-weight: 500;
+    letter-spacing: 0.2px;
+  }
+  /* Inline-rename editor — matches .label dimensions so the tab doesn't
+     reflow when entering rename mode. */
+  .tab .rename-input {
+    flex: 1; min-width: 0;
+    background: rgba(56,189,248,0.1);
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    color: var(--fg-strong);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.2px;
+    padding: 1px 4px;
+    outline: none;
   }
   .tab .dot {
     width: 8px; height: 8px; border-radius: 50%;
-    background: var(--idle);
+    background: var(--dim);
     flex-shrink: 0;
-    transition: background 200ms;
+    transition: background 200ms, box-shadow 200ms;
   }
-  .tab.live .dot { background: var(--pulse); }
-  .tab.offline .dot { background: var(--offline); }
-  .tab.live.busy .dot { animation: pulse 1.2s ease-in-out infinite; }
+  .tab.live .dot {
+    background: var(--idle);
+    box-shadow: 0 0 6px rgba(34,197,94,0.55);
+  }
+  .tab.live.busy .dot {
+    background: var(--busy);
+    box-shadow: 0 0 8px rgba(245,158,11,0.65);
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  .tab.offline .dot {
+    background: var(--offline);
+    box-shadow: 0 0 6px rgba(239,68,68,0.55);
+  }
   @keyframes pulse {
-    0%, 100% { opacity: 0.4; transform: scale(0.85); box-shadow: 0 0 0 0 rgba(34,197,94,0); }
-    50%      { opacity: 1.0; transform: scale(1.05); box-shadow: 0 0 0 4px rgba(34,197,94,0.18); }
+    0%, 100% { opacity: 0.6; transform: scale(0.85); box-shadow: 0 0 0 0 rgba(245,158,11,0); }
+    50%      { opacity: 1.0; transform: scale(1.1);  box-shadow: 0 0 0 4px rgba(245,158,11,0.22); }
   }
   .tab .close {
     color: var(--fg-dim);
-    width: 16px; height: 16px; border-radius: 3px;
+    width: 18px; height: 18px; border-radius: 4px;
     display: flex; align-items: center; justify-content: center;
-    font-size: 11px; line-height: 1;
+    font-size: 12px; line-height: 1;
     flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 120ms, background 120ms, color 120ms;
   }
-  .tab .close:hover { background: rgba(239,68,68,0.18); color: #fca5a5; }
+  .tab:hover .close, .tab.active .close { opacity: 0.7; }
+  .tab .close:hover { opacity: 1; background: rgba(239,68,68,0.2); color: #fca5a5; }
   .tab-add {
     display: flex; align-items: center; justify-content: center;
-    width: 36px; cursor: pointer; color: var(--fg-dim);
+    width: 32px; cursor: pointer; color: var(--fg-dim);
     font-size: 18px; line-height: 1;
+    border-radius: 6px 6px 0 0;
+    transition: background 120ms, color 120ms;
   }
-  .tab-add:hover { color: var(--accent); }
-  #stats {
-    margin-left: auto; padding: 0 12px;
-    display: flex; align-items: center; gap: 14px;
-    color: var(--fg-dim); font-size: 12px;
+  .tab-add:hover { color: var(--accent); background: #1c1c1c; }
+  /* Reload button on the top-right of the tabbar. Triggers
+     location.reload() — which re-fetches wall.html and reconnects
+     the browser-side WS sockets. Crucially, the wall HTTP+WS server
+     and the orchestrator's peer TLS sockets ALL live in Electron's
+     main process, NOT the renderer — so reloading the renderer does
+     NOT disconnect peers. After the reload, refreshPeers() re-builds
+     tabs from /api/peers (still authoritative). */
+  #reload {
+    margin-left: auto;
+    display: flex; align-items: center; justify-content: center;
+    width: 32px; cursor: pointer; color: var(--fg-dim);
+    font-size: 16px; line-height: 1;
+    border-radius: 6px 6px 0 0;
+    transition: background 120ms, color 120ms, transform 400ms;
   }
-  #content { position: relative; height: calc(100% - 36px); }
+  #reload:hover { color: var(--accent); background: #1c1c1c; }
+  #reload:active { transform: rotate(180deg); }
+  #content { position: relative; height: calc(100% - 40px); }
   .term-host {
-    position: absolute; inset: 0; padding: 6px;
+    position: absolute; inset: 0;
     display: none;
+    background: var(--bg);
   }
   .term-host.active { display: block; }
+
+  /* xterm scrollbar — make it slim and theme-matched. The default
+     browser scrollbar is bulky and bright. xterm renders inside
+     .xterm-viewport which is what gets scrolled. */
+  .xterm-viewport::-webkit-scrollbar { width: 8px; }
+  .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
+  .xterm-viewport::-webkit-scrollbar-thumb {
+    background: #2a2a2a; border-radius: 4px;
+  }
+  .xterm-viewport::-webkit-scrollbar-thumb:hover { background: #3a3a3a; }
+  /* Hide the wall's own scrollbar (the browser viewport) — content is
+     bounded and term has its own. */
+  body::-webkit-scrollbar { display: none; }
   .empty {
     position: absolute; inset: 0;
     display: flex; align-items: center; justify-content: center;
@@ -119,6 +204,20 @@
     font-size: 13px; margin-bottom: 12px;
   }
   .modal input:focus { outline: none; border-color: var(--border-active); }
+  /* Token row: input + small inline Paste button on the right. */
+  .modal .token-row {
+    display: flex; gap: 6px; margin-bottom: 12px;
+  }
+  .modal .token-row input { margin: 0; flex: 1; min-width: 0; }
+  .modal .paste-btn {
+    flex-shrink: 0;
+    padding: 0 12px;
+    background: var(--bg); border: 1px solid var(--border);
+    color: var(--fg-strong); border-radius: 4px;
+    cursor: pointer; font-size: 12px;
+    transition: background 120ms, border-color 120ms, color 120ms;
+  }
+  .modal .paste-btn:hover { background: #1c1c1c; border-color: var(--border-active); color: var(--accent); }
   .modal .row { display: flex; gap: 8px; justify-content: flex-end; }
   .modal button {
     padding: 6px 14px; border: 1px solid var(--border);
@@ -145,7 +244,7 @@
 <div id="tabbar">
   <div id="tabs"></div>
   <div class="tab-add" id="add-tab" title="Connect to a peer (Ctrl+T)">+</div>
-  <div id="stats">0 peers</div>
+  <div id="reload" title="Reload viewer (does not disconnect peers)">↻</div>
 </div>
 <div id="content">
   <div class="empty" id="empty">
@@ -159,7 +258,10 @@
   <div class="modal">
     <h2>Connect to a peer</h2>
     <label for="token-input">Join token (TLP1…)</label>
-    <input id="token-input" placeholder="TLP1AAAAABBBBBCCCCCDDDDDEEEEE" autocomplete="off" spellcheck="false" />
+    <div class="token-row">
+      <input id="token-input" placeholder="TLP1AAAAABBBBBCCCCCDDDDDEEEEE" autocomplete="off" spellcheck="false" />
+      <button id="paste-btn" class="paste-btn" type="button" title="Paste from clipboard">Paste</button>
+    </div>
     <div class="err" id="modal-err"></div>
     <div class="row">
       <button id="modal-cancel">Cancel</button>
@@ -181,7 +283,6 @@
   const tabsEl = $("tabs");
   const contentEl = $("content");
   const emptyEl = $("empty");
-  const statsEl = $("stats");
   const modalBg = $("modal-bg");
   const tokenInput = $("token-input");
   const modalErr = $("modal-err");
@@ -227,6 +328,11 @@
   }
   function closeModal() { modalBg.classList.remove("show"); }
   $("add-tab").addEventListener("click", openModal);
+  // Reload viewer — re-fetches wall.html and reconnects the browser-side
+  // WS sockets. Wall server + peer TLS sockets live in Electron's MAIN
+  // process and are unaffected; refreshPeers() will re-build tab state
+  // on load.
+  $("reload").addEventListener("click", () => location.reload());
   $("empty-add").addEventListener("click", openModal);
   $("modal-cancel").addEventListener("click", closeModal);
   modalBg.addEventListener("click", (e) => { if (e.target === modalBg) { closeModal(); } });
@@ -235,6 +341,20 @@
     else if (e.key === "Escape") { closeModal(); }
   });
   $("modal-ok").addEventListener("click", onModalOk);
+  $("paste-btn").addEventListener("click", async () => {
+    // navigator.clipboard.readText() works inside Electron renderers
+    // without extra perms (default policy), and on https/localhost in
+    // browsers. We focus the input first so the user can immediately
+    // edit if needed, then trigger the connect flow on Enter.
+    try {
+      const text = await navigator.clipboard.readText();
+      tokenInput.value = (text || "").trim();
+      tokenInput.focus();
+      modalErr.textContent = "";
+    } catch (err) {
+      modalErr.textContent = "Paste failed: " + (err.message || err) + " — paste manually.";
+    }
+  });
   document.addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === "t") { e.preventDefault(); openModal(); }
   });
@@ -269,7 +389,17 @@
       dot = document.createElement("span"); dot.className = "dot";
       label = document.createElement("span"); label.className = "label";
       label.textContent = peer.alias + (peer.remoteAlias && peer.remoteAlias !== peer.alias ? " (" + peer.remoteAlias + ")" : "");
-      label.title = peer.remoteAddr;
+      label.title = "double-click to rename · " + (peer.remoteAddr || "");
+      // Double-click to rename: swap the label for an inline <input>.
+      // Enter / blur commits, Escape cancels. Rename is local-only (this
+      // viewer session) — the underlying peer alias on the wire doesn't
+      // change, so other commands (`telepathy peers`, `disconnect`) still
+      // use the original alias. Tracked separately on the entry as
+      // `displayName` so we can keep using `peer.alias` as the routing key.
+      label.addEventListener("dblclick", (e) => {
+        e.stopPropagation();
+        startRename(peer.alias);
+      });
       const close = document.createElement("span"); close.className = "close"; close.textContent = "✕";
       close.title = "Close tab (disconnect)";
       close.addEventListener("click", (e) => { e.stopPropagation(); closeTab(peer.alias); });
@@ -292,17 +422,23 @@
         // benefit from a focused, navigable terminal (selection, copy,
         // scrolling). The WS-forward step still gates by hasPty, so
         // typing into a no-PTY peer just no-ops on the wire.
-        theme: { background: "#0a0d12", foreground: "#cbd5e1" },
+        theme: { background: "#000000", foreground: "#d4d4d4" },
       });
       fit = new window.FitAddon.FitAddon();
       term.loadAddon(fit);
       term.open(termHost);
-      setTimeout(() => { try { fit.fit(); } catch (_) {} }, 0);
+      // NOTE: termHost is display:none until activate() is called. We
+      // intentionally don't fit() here — fit against a hidden element
+      // returns garbage dimensions (~80x24 default) and would tell the
+      // host's PTY to size for a non-existent viewport, leaving Copilot
+      // CLI's bottom-anchored prompt drawn off-screen. The real fit
+      // happens in activate() once termHost is .active.
 
       ws = new WebSocket(`${location.origin.replace("http", "ws")}/ws/${encodeURIComponent(peer.alias)}?t=${encodeURIComponent(TOKEN)}`);
       entry = {
         tab, dot, label, termHost, term, fit, ws,
         lastFrameAt: 0, busyTimer: null, hasPty: peer.hasPty, alias: peer.alias,
+        lastSentCols: 0, lastSentRows: 0,
       };
       // Click anywhere on the term host (including the empty area below
       // the prompt) re-focuses xterm. Without this, click → focus moves
@@ -311,14 +447,51 @@
       termHost.addEventListener("mousedown", () => {
         try { term.focus(); } catch (_) {}
       });
-      ws.onopen = () => { tab.classList.add("live"); };
+      function sendResizeNow() {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        const cols = term.cols, rows = term.rows;
+        // Filter bogus sizes from hidden-element fits — fitting against
+        // display:none returns garbage (~80x24 default) and would push
+        // the wrong size to the host's PTY.
+        if (!cols || !rows || cols < 10 || rows < 4) return;
+        if (cols === entry.lastSentCols && rows === entry.lastSentRows) return;
+        entry.lastSentCols = cols;
+        entry.lastSentRows = rows;
+        try { ws.send(JSON.stringify({ type: "resize", cols, rows })); } catch (_) { /* ignore */ }
+        // ALWAYS clear xterm on resize, including the very first one. The
+        // replay frame from `pty_subscribe_ack` paints content at the
+        // host's pre-resize PTY size (typically 132×42 wrapper default).
+        // Once we resize the host, its TUI (Copilot CLI / vim / etc.)
+        // redraws via cursor-position writes — those writes do NOT clear
+        // unaffected rows, so old replay rows linger as ghost text. The
+        // host redraws within ~50ms after SIGWINCH, so the brief blank
+        // is invisible in practice and beats the alternative of stale
+        // banner artifacts every time the user resizes (or even just
+        // launches the wall).
+        try { term.reset(); } catch (_) { /* ignore */ }
+      }
+      entry.sendResizeNow = sendResizeNow;
+      ws.onopen = () => {
+        tab.classList.add("live");
+        // If the tab is already active when WS opens, fit + send now.
+        // (Common case: first tab — refreshPeers called createTab then
+        // activate before WS connected.)
+        if (termHost.classList.contains("active")) {
+          try { fit.fit(); } catch (_) {}
+          sendResizeNow();
+        }
+      };
+      // Subsequent xterm resizes (window resize, tab activation re-fit)
+      // get forwarded too, so the PTY stays in lockstep.
+      term.onResize(sendResizeNow);
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
         if (msg.type === "frame") {
           term.write(b64ToBytes(msg.data));
           markBusy(entry);
         } else if (msg.type === "resize") {
-          try { term.resize(msg.cols, msg.rows); } catch (_) {}
+          // Host's PTY resized (e.g. another viewer triggered it).
+          // We don't currently re-fit our xterm; just record the size.
         } else if (msg.type === "error") {
           term.write("\r\n\x1b[31m[telepathy] " + msg.message + "\x1b[0m\r\n");
           tab.classList.remove("live"); tab.classList.add("offline");
@@ -372,9 +545,13 @@
       if (isActive && t.term) {
         // Defer fit + focus to next frame so the display:none → block
         // transition has had a chance to land in layout. Calling focus()
-        // on a freshly-displayed element doesn't always take.
+        // on a freshly-displayed element doesn't always take. After fit
+        // settles we explicitly forward the resize to the host (xterm's
+        // onResize doesn't always fire if dimensions look unchanged from
+        // its perspective even though the host is stuck at a stale size).
         requestAnimationFrame(() => {
           try { t.fit.fit(); } catch (_) {}
+          try { t.sendResizeNow && t.sendResizeNow(); } catch (_) {}
           try { t.term.focus(); } catch (_) {}
         });
       }
@@ -396,12 +573,56 @@
       if (next) { activate(next); }
       else { activeAlias = null; emptyEl.style.display = "flex"; }
     }
-    updateStats();
   }
 
-  function updateStats() {
-    const n = tabs.size;
-    statsEl.textContent = n === 0 ? "0 peers" : `${n} peer${n === 1 ? "" : "s"}`;
+  // ---- rename ----------------------------------------------------------
+
+  // Local-only rename: swap the .label span for an <input>. Enter or
+  // blur commits the new text into entry.displayName (and into
+  // label.textContent on commit). Escape cancels. The peer's wire alias
+  // is unchanged — this is a viewer-side cosmetic only, so other
+  // commands like `telepathy peers` and `telepathy disconnect` keep
+  // using the original alias as their key.
+  function startRename(alias) {
+    const entry = tabs.get(alias);
+    if (!entry || !entry.label) return;
+    const oldText = entry.label.textContent;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "label rename-input";
+    input.value = oldText;
+    input.spellcheck = false;
+    input.autocomplete = "off";
+    entry.label.replaceWith(input);
+    // Keep clicking the input from re-activating / re-firing dblclick
+    // navigation. Selection happens after focus so the user can type
+    // immediately to overwrite.
+    input.addEventListener("click", (e) => e.stopPropagation());
+    input.addEventListener("dblclick", (e) => e.stopPropagation());
+    input.focus();
+    input.select();
+    let done = false;
+    const commit = (newText) => {
+      if (done) return;
+      done = true;
+      const finalText = (newText ?? oldText).trim() || oldText;
+      const span = document.createElement("span");
+      span.className = "label";
+      span.textContent = finalText;
+      span.title = "double-click to rename";
+      span.addEventListener("dblclick", (e) => {
+        e.stopPropagation();
+        startRename(alias);
+      });
+      input.replaceWith(span);
+      entry.label = span;
+      entry.displayName = finalText;
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); commit(input.value); }
+      else if (e.key === "Escape") { e.preventDefault(); commit(oldText); }
+    });
+    input.addEventListener("blur", () => commit(input.value));
   }
 
   // ---- discovery / refresh ---------------------------------------------
@@ -430,7 +651,6 @@
       }
     }
     if (tabs.size === 0) { emptyEl.style.display = "flex"; }
-    updateStats();
   }
 
   await refreshPeers();
@@ -439,7 +659,11 @@
 
   window.addEventListener("resize", () => {
     for (const t of tabs.values()) {
+      if (!t.fit || !t.termHost) continue;
+      // Only fit visible terms — fitting a hidden one returns garbage.
+      if (!t.termHost.classList.contains("active")) continue;
       try { t.fit.fit(); } catch (_) {}
+      try { t.sendResizeNow && t.sendResizeNow(); } catch (_) {}
     }
   });
 })();
