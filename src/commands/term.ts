@@ -6,7 +6,7 @@
 
 import { connectPeer } from "../core/api.js";
 import {
-  setOrchestratorEvents,
+  addOrchestratorEvents,
   subscribeRemotePty,
   sendRemoteInput,
   unsubscribeRemotePty,
@@ -37,7 +37,7 @@ export async function runTermMode(opts: TermOptions): Promise<void> {
   process.stderr.write(chalk.dim("   PTY mirror — press Ctrl-] to disconnect.\n\n"));
 
   let peerForCleanup: Peer | undefined;
-  setOrchestratorEvents({
+  addOrchestratorEvents({
     onRemoteFrame: (peer, dataBase64) => {
       peerForCleanup = peer;
       process.stdout.write(Buffer.from(dataBase64, "base64"));

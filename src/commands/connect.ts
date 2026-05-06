@@ -4,6 +4,7 @@
 
 import { connectPeer } from "../core/api.js";
 import { startViewer, getViewerUrl } from "../core/viewer.js";
+import { addOrchestratorEvents } from "../core/orchestrator.js";
 import { runTermMode } from "./term.js";
 import { spawn } from "node:child_process";
 import chalk from "chalk";
@@ -39,6 +40,15 @@ export async function runConnect(opts: ConnectCommandOptions): Promise<void> {
   process.stderr.write(`${chalk.green("🖥  viewer:")} ${url}\n`);
   process.stderr.write(chalk.dim("   Press Ctrl-C to disconnect.\n"));
   openInBrowser(url);
+  // Exit cleanly when the host disconnects (e.g. they typed `exit` in
+  // the wrapped shell) — otherwise the user is stuck staring at a dead
+  // browser viewer with no obvious way out.
+  addOrchestratorEvents({
+    onPeerDisconnected: (peer, reason) => {
+      process.stderr.write(`\n${chalk.dim(`(remote ${peer.alias} disconnected${reason ? `: ${reason}` : ""})`)}\n`);
+      process.exit(0);
+    },
+  });
   await new Promise<never>((_, reject) => {
     process.once("SIGINT", () => {
       process.stderr.write(chalk.dim("\n(disconnected)\n"));

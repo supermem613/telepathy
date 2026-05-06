@@ -66,6 +66,37 @@ export function setOrchestratorEvents(events: OrchestratorEvents): void {
   listeners = events;
 }
 
+// Like setOrchestratorEvents, but merges into the existing listener set
+// rather than replacing it. Useful when multiple subsystems (e.g. the
+// viewer + the connect-command UI) want to observe the same events
+// without stomping on each other's handlers. For each key, both the
+// previous handler (if any) AND the new one fire.
+export function addOrchestratorEvents(events: OrchestratorEvents): void {
+  const prev = listeners;
+  const next: OrchestratorEvents = { ...prev };
+  for (const key of Object.keys(events) as (keyof OrchestratorEvents)[]) {
+    const incoming = events[key];
+    const existing = prev[key];
+    if (!incoming) {
+      continue;
+    }
+    if (!existing) {
+      next[key] = incoming as never;
+      continue;
+    }
+    // Both exist — chain them. Use a per-key wrapper that calls both.
+    next[key] = ((...args: unknown[]) => {
+      try {
+        (existing as (...a: unknown[]) => void)(...args); 
+      } catch { /* ignore */ }
+      try {
+        (incoming as (...a: unknown[]) => void)(...args); 
+      } catch { /* ignore */ }
+    }) as never;
+  }
+  listeners = next;
+}
+
 export function setLocalPty(pty: LocalPty | null): void {
   localPty = pty;
   if (pty && pendingPtySubscribes.length > 0) {
@@ -160,6 +191,22 @@ export function adoptIncoming(socket: TLSSocket, requestedAliasFallback: string)
 // Called from cli/tools when user runs telepathy_connect.
 export async function adoptOutgoing(socket: TLSSocket, requestedAlias?: string): Promise<Peer> {
   const remoteAddr = `${socket.remoteAddress ?? "?"}:${socket.remotePort ?? "?"}`;
+  let adoptedPeer: Peer | undefined;
+  // Wire close/error notifications EARLY so we surface a disconnect even if
+  // it arrives after adoption (e.g. host's shell exits → host process exits
+  // → TLS socket closes → dialer must clean up its term/browser viewer).
+  socket.on("close", () => {
+    if (adoptedPeer) {
+      removePeer(adoptedPeer.alias);
+      listeners.onPeerDisconnected?.(adoptedPeer, "closed");
+    }
+  });
+  socket.on("error", (err) => {
+    if (adoptedPeer) {
+      removePeer(adoptedPeer.alias);
+      listeners.onPeerDisconnected?.(adoptedPeer, err.message);
+    }
+  });
   return new Promise<Peer>((resolve, reject) => {
     const hello: HelloMessage = {
       type: "hello",
@@ -197,6 +244,7 @@ export async function adoptOutgoing(socket: TLSSocket, requestedAlias?: string):
           remoteCapabilities: frame.capabilities,
         });
         addPeer(peer);
+        adoptedPeer = peer;
         listeners.onPeerConnected?.(peer);
         fireFirstPeerHooks(peer);
         resolve(peer);
@@ -210,7 +258,6 @@ export async function adoptOutgoing(socket: TLSSocket, requestedAlias?: string):
       }
     };
     attachReader(socket, onFrame, () => fail("socket closed before hello_ack"));
-    socket.once("error", (err) => fail(`socket error: ${err.message}`));
     setTimeout(() => fail("hello_ack timeout"), 5000);
   });
 }
