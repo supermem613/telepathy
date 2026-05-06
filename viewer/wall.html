@@ -288,7 +288,10 @@
         fontSize: 13,
         fontFamily: '"CaskaydiaCove Nerd Font", "Cascadia Code NF", "Cascadia Code", "FiraCode Nerd Font", "FiraCode NF", "JetBrainsMono Nerd Font", "JetBrainsMono NF", "Hack Nerd Font", "MesloLGS NF", "Consolas", "Menlo", monospace',
         cursorBlink: true,
-        disableStdin: !peer.hasPty,
+        // Don't gate stdin on hasPty: even peers without PTY mirroring
+        // benefit from a focused, navigable terminal (selection, copy,
+        // scrolling). The WS-forward step still gates by hasPty, so
+        // typing into a no-PTY peer just no-ops on the wire.
         theme: { background: "#0a0d12", foreground: "#cbd5e1" },
       });
       fit = new window.FitAddon.FitAddon();
@@ -301,6 +304,13 @@
         tab, dot, label, termHost, term, fit, ws,
         lastFrameAt: 0, busyTimer: null, hasPty: peer.hasPty, alias: peer.alias,
       };
+      // Click anywhere on the term host (including the empty area below
+      // the prompt) re-focuses xterm. Without this, click → focus moves
+      // to the host div, leaving xterm's inner textarea unfocused, and
+      // keystrokes go nowhere.
+      termHost.addEventListener("mousedown", () => {
+        try { term.focus(); } catch (_) {}
+      });
       ws.onopen = () => { tab.classList.add("live"); };
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
@@ -354,9 +364,14 @@
       const isActive = a === alias;
       t.tab.classList.toggle("active", isActive);
       t.termHost.classList.toggle("active", isActive);
-      if (isActive) {
-        try { t.fit.fit(); } catch (_) {}
-        t.term.focus();
+      if (isActive && t.term) {
+        // Defer fit + focus to next frame so the display:none → block
+        // transition has had a chance to land in layout. Calling focus()
+        // on a freshly-displayed element doesn't always take.
+        requestAnimationFrame(() => {
+          try { t.fit.fit(); } catch (_) {}
+          try { t.term.focus(); } catch (_) {}
+        });
       }
     }
     if (alias) { emptyEl.style.display = "none"; }
