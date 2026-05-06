@@ -12,9 +12,10 @@ describe("token round-trip", () => {
     assert.deepEqual(decoded.secret, secret);
   });
 
-  it("emits the expected TLP1. prefix and dash-grouped body", () => {
+  it("emits the expected TLP1. prefix + dashless base32 body (one word, easy to double-click)", () => {
     const token = encodeToken({ host: "10.0.0.1", port: 1, secret: Buffer.alloc(8) });
-    assert.match(token, /^TLP1\.[A-Z2-7]{5}-[A-Z2-7]{5}-[A-Z2-7]{5}-[A-Z2-7]{5}-[A-Z2-7]{3}$/);
+    assert.match(token, /^TLP1\.[A-Z2-7]+$/);
+    assert.equal(token.includes("-"), false, "token must not contain dashes");
   });
 
   it("tolerates whitespace, lowercase, and missing dashes on decode", () => {

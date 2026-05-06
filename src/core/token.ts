@@ -45,8 +45,13 @@ export function encodeToken(payload: TokenPayload): string {
   ip.copy(buf, 0);
   buf.writeUInt16BE(payload.port, 4);
   payload.secret.copy(buf, 6);
-  const b32 = base32Encode(buf);
-  return `${PREFIX}${groupDashes(b32, 5)}`;
+  // No dashes in the emitted token: most terminals (Windows Terminal,
+  // gnome-terminal, iTerm) treat '-' as a word separator, so dashes
+  // break double-click-to-select. The token is now one "word" the user
+  // can double-click to copy. decodeToken still tolerates dashes,
+  // whitespace, lowercase — so any older tokens still pasted in by hand
+  // continue to work.
+  return `${PREFIX}${base32Encode(buf)}`;
 }
 
 export function decodeToken(token: string): TokenPayload {
@@ -160,12 +165,4 @@ function base32Decode(s: string): Buffer {
     }
   }
   return Buffer.from(bytes);
-}
-
-function groupDashes(s: string, group: number): string {
-  const parts: string[] = [];
-  for (let i = 0; i < s.length; i += group) {
-    parts.push(s.slice(i, i + group));
-  }
-  return parts.join("-");
 }
