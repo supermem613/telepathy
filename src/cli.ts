@@ -27,6 +27,7 @@ program
   .option("-b, --bind <host>", "Interface to bind to (default: detected LAN IPv4)")
   .option("-a, --advertise <host>", "IP encoded into the join token (default: detected LAN IPv4)")
   .option("--no-listen", "Run wrapper without binding a peer listener")
+  .option("--no-hold", "Spawn the shell immediately; don't hold for first peer / keypress")
   .allowUnknownOption(true)
   .allowExcessArguments(true)
   .action(async (options) => {
@@ -38,6 +39,7 @@ program
       bind: options.bind,
       advertise: options.advertise,
       noListen: options.listen === false,
+      noHold: options.hold === false,
     });
   });
 

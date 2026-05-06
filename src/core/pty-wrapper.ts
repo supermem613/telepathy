@@ -86,7 +86,11 @@ export async function startWrapper(opts: {
   };
 
   pty.onData((data) => {
-    const chunk = Buffer.from(data, "binary");
+    // node-pty emits already-decoded UTF-8 strings. Re-encode to UTF-8
+    // bytes so the user's terminal sees the original byte stream
+    // (powerline glyphs, box-drawing, etc. are multi-byte UTF-8 and get
+    // mangled if we round-trip through "binary"/Latin-1).
+    const chunk = Buffer.from(data, "utf8");
     process.stdout.write(chunk);
     ringBuffer = appendBounded(ringBuffer, chunk, RING_BUFFER_BYTES);
     broadcastFrame(chunk);
@@ -113,7 +117,10 @@ export async function startWrapper(opts: {
     process.stdin.setRawMode(true);
   }
   process.stdin.on("data", (chunk: Buffer) => {
-    pty.write(chunk.toString("binary"));
+    // node-pty.write expects a UTF-8 string; pass our raw stdin bytes
+    // through that decoding so non-ASCII keystrokes (typed multi-byte
+    // input, paste containing emoji/etc.) reach the PTY intact.
+    pty.write(chunk.toString("utf8"));
   });
 
   // Resize: when the wrapper's TTY changes, mirror to the PTY and notify subs.
@@ -155,7 +162,7 @@ export async function startWrapper(opts: {
       readIpc<ExtensionToWrapper>(socket, (msg) => {
         if (msg.type === "input") {
           const data = Buffer.from(msg.dataBase64, "base64");
-          pty.write(data.toString("binary"));
+          pty.write(data.toString("utf8"));
         } else if (msg.type === "resize") {
           try {
             pty.resize(msg.cols, msg.rows);

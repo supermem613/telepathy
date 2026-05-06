@@ -48,12 +48,19 @@ let listeners: OrchestratorEvents = {};
 let localPty: LocalPty | null = null;
 
 // Subscribers to a remote peer's PTY (we are the watcher).
-//   key = peer alias, value = subscription bookkeeping.
 const remotePtySubs = new Map<string, { id: string; cols: number; rows: number }>();
 
 // Local PTY subscribers we serve to remote peers (we are the host).
-//   key = peer alias, value = unsubscribe function.
 const localPtyServingSubs = new Map<string, () => void>();
+
+// Pending pty_subscribe requests received before the local PTY existed.
+// Drained when setLocalPty(non-null) is called.
+const pendingPtySubscribes: Array<{ peer: Peer; id: string }> = [];
+
+// Hooks fired when the first peer connects (used by `telepathy host` to
+// race "peer arrives" against "user presses any key" before spawning the
+// shell). Cleared after first fire — only the first connection wakes them.
+let onFirstPeerHooks: Array<(peer: Peer) => void> = [];
 
 export function setOrchestratorEvents(events: OrchestratorEvents): void {
   listeners = events;
@@ -61,10 +68,23 @@ export function setOrchestratorEvents(events: OrchestratorEvents): void {
 
 export function setLocalPty(pty: LocalPty | null): void {
   localPty = pty;
+  if (pty && pendingPtySubscribes.length > 0) {
+    const queue = pendingPtySubscribes.splice(0);
+    for (const req of queue) {
+      servePtySubscribe(req.peer, req.id);
+    }
+  }
 }
 
 export function hasLocalPty(): boolean {
   return localPty !== null;
+}
+
+export function onFirstPeerConnect(handler: (peer: Peer) => void): () => void {
+  onFirstPeerHooks.push(handler);
+  return () => {
+    onFirstPeerHooks = onFirstPeerHooks.filter((h) => h !== handler);
+  };
 }
 
 export function getRemotePtySize(alias: string): { cols: number; rows: number } | null {
@@ -124,6 +144,7 @@ export function adoptIncoming(socket: TLSSocket, requestedAliasFallback: string)
     };
     sendFrame(socket, ack);
     listeners.onPeerConnected?.(peer);
+    fireFirstPeerHooks(peer);
   };
   // Re-route subsequent frames through handleFrameForPeer once peer exists.
   // The transport layer attached its own readline reader; we override by
@@ -177,6 +198,7 @@ export async function adoptOutgoing(socket: TLSSocket, requestedAlias?: string):
         });
         addPeer(peer);
         listeners.onPeerConnected?.(peer);
+        fireFirstPeerHooks(peer);
         resolve(peer);
         return;
       }
@@ -237,35 +259,11 @@ function handleFrameForPeer(peer: Peer, frame: Message): void {
       return;
     case "pty_subscribe": {
       if (!localPty) {
-        sendFrame(peer.socket, {
-          type: "pty_subscribe_ack",
-          id: frame.id,
-          ok: false,
-          error: "no local PTY on this host",
-        });
+        // Defer: queue this subscribe and answer it when setLocalPty(non-null) fires.
+        pendingPtySubscribes.push({ peer, id: frame.id });
         return;
       }
-      localPtyServingSubs.get(peer.alias)?.();
-      const onFrame = (f: { dataBase64: string }): void => {
-        sendFrame(peer.socket, { type: "pty_frame", dataBase64: f.dataBase64 });
-      };
-      const onResize = (s: { cols: number; rows: number }): void => {
-        sendFrame(peer.socket, { type: "pty_resize", cols: s.cols, rows: s.rows });
-      };
-      localPty.state.subscribers.add(onFrame);
-      localPty.state.resizeSubscribers.add(onResize);
-      localPtyServingSubs.set(peer.alias, () => {
-        localPty?.state.subscribers.delete(onFrame);
-        localPty?.state.resizeSubscribers.delete(onResize);
-      });
-      sendFrame(peer.socket, {
-        type: "pty_subscribe_ack",
-        id: frame.id,
-        ok: true,
-        cols: localPty.state.cols,
-        rows: localPty.state.rows,
-        replayBase64: localPty.state.ringBuffer.toString("base64"),
-      });
+      servePtySubscribe(peer, frame.id);
       return;
     }
     case "pty_unsubscribe":
@@ -328,6 +326,55 @@ export function unsubscribeRemotePty(peer: Peer): void {
 
 export function sendRemoteInput(peer: Peer, dataBase64: string): void {
   sendFrame(peer.socket, { type: "pty_input", dataBase64 });
+}
+
+function fireFirstPeerHooks(peer: Peer): void {
+  if (onFirstPeerHooks.length === 0) {
+    return;
+  }
+  const hooks = onFirstPeerHooks;
+  onFirstPeerHooks = [];
+  for (const h of hooks) {
+    try {
+      h(peer);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function servePtySubscribe(peer: Peer, requestId: string): void {
+  if (!localPty) {
+    sendFrame(peer.socket, {
+      type: "pty_subscribe_ack",
+      id: requestId,
+      ok: false,
+      error: "no local PTY on this host",
+    });
+    return;
+  }
+  // If they already had a sub, drop it first.
+  localPtyServingSubs.get(peer.alias)?.();
+  const onFrame = (f: { dataBase64: string }): void => {
+    sendFrame(peer.socket, { type: "pty_frame", dataBase64: f.dataBase64 });
+  };
+  const onResize = (s: { cols: number; rows: number }): void => {
+    sendFrame(peer.socket, { type: "pty_resize", cols: s.cols, rows: s.rows });
+  };
+  localPty.state.subscribers.add(onFrame);
+  localPty.state.resizeSubscribers.add(onResize);
+  localPtyServingSubs.set(peer.alias, () => {
+    localPty?.state.subscribers.delete(onFrame);
+    localPty?.state.resizeSubscribers.delete(onResize);
+  });
+  sendFrame(peer.socket, {
+    type: "pty_subscribe_ack",
+    id: requestId,
+    ok: true,
+    cols: localPty.state.cols,
+    rows: localPty.state.rows,
+    replayBase64: localPty.state.ringBuffer.toString("base64"),
+  });
 }
 
 // (handleSendRequest removed in standalone build — no agent layer)

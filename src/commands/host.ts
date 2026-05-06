@@ -2,19 +2,33 @@
 // listener so peers can attach. The wrapper is the parent of the
 // spawned program; it owns the pseudo-terminal and tees frames to the
 // user's terminal AND to peer subscribers via the orchestrator.
+//
+// Flow:
+//   1. acceptStart() binds the LAN listener immediately
+//   2. Print the join token banner
+//   3. Hold: race "first peer connects" vs "user presses any key"
+//      (peers can connect during the hold; the orchestrator queues their
+//      pty_subscribe until the local PTY appears)
+//   4. Spawn the wrapped shell under ConPTY
+//   5. Drain any queued pty_subscribes — peers see the shell from frame 0
 
 import { hostname } from "node:os";
-import { spawn } from "node:child_process";
 import { startWrapper } from "../core/pty-wrapper.js";
-import { acceptStart, setLocalPty, type AcceptOptions } from "../core/api.js";
+import {
+  acceptStart,
+  setLocalPty,
+  type AcceptOptions,
+} from "../core/api.js";
+import { onFirstPeerConnect } from "../core/orchestrator.js";
 import { attachToWrapperIfPresent } from "./host-pty-shim.js";
 import { buildPipePath } from "../core/ipc.js";
 import chalk from "chalk";
 
 export type HostOptions = AcceptOptions & {
-  command?: string;       // override the spawned program
-  args?: string[];        // args to pass to it
-  noListen?: boolean;     // run wrapper but don't bind a peer listener
+  command?: string;
+  args?: string[];
+  noListen?: boolean;       // skip listener; just wrap the process locally
+  noHold?: boolean;         // spawn shell immediately; don't wait for peer/keypress
 };
 
 export async function runHost(opts: HostOptions): Promise<void> {
@@ -27,9 +41,6 @@ export async function runHost(opts: HostOptions): Promise<void> {
     TELEPATHY_LOCAL_ALIAS: process.env.TELEPATHY_ALIAS ?? hostname().toLowerCase(),
   };
 
-  // Bind the peer listener and print the banner FIRST, while we still own
-  // the terminal. Once startWrapper takes over (raw mode + ConPTY frames),
-  // the spawned shell's startup ANSI clobbers anything we write next.
   if (!opts.noListen) {
     try {
       const result = await acceptStart(opts);
@@ -37,6 +48,10 @@ export async function runHost(opts: HostOptions): Promise<void> {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       process.stderr.write(chalk.yellow(`telepathy host: peer listener failed (${msg}). Continuing without LAN exposure.\n`));
+    }
+
+    if (!opts.noHold) {
+      await holdForFirstPeerOrKeypress();
     }
   }
 
@@ -54,20 +69,63 @@ export async function runHost(opts: HostOptions): Promise<void> {
     process.exit(2);
   }
 
-  // Connect the in-process API surface to the wrapper's IPC, so peer
-  // subscribers fan-out from the same PTY the user is interacting with.
-  // (There's a microsecond window between acceptStart and this assignment
-  //  where an inbound pty_subscribe would be rejected; no real client can
-  //  hit it at human speed.)
   const localPty = await attachToWrapperIfPresent(pipePath);
   setLocalPty(localPty);
+}
+
+// Race "first peer connects" against "user presses any key". Resolves on
+// whichever happens first. Idempotent — both branches clean up the other.
+function holdForFirstPeerOrKeypress(): Promise<"peer" | "key"> {
+  return new Promise((resolve) => {
+    let done = false;
+    const settle = (reason: "peer" | "key", message: string): void => {
+      if (done) {
+        return;
+      }
+      done = true;
+      cleanup();
+      process.stderr.write(`${message}\n`);
+      resolve(reason);
+    };
+
+    const unsubscribePeer = onFirstPeerConnect((peer) => {
+      settle("peer", chalk.green(`✔ peer connected: ${peer.alias} (${peer.remoteAddr}). Spawning shell...`));
+    });
+
+    const onKey = (chunk: Buffer): void => {
+      // Ctrl-C in the holding state aborts cleanly.
+      if (chunk.length > 0 && chunk[0] === 0x03) {
+        cleanup();
+        process.stderr.write(chalk.dim("\n(aborted)\n"));
+        process.exit(130);
+      }
+      settle("key", chalk.dim("✔ keypress detected. Spawning shell..."));
+    };
+
+    const wasRaw = process.stdin.isTTY ? process.stdin.isRaw : false;
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(true);
+    }
+    process.stdin.resume();
+    process.stdin.on("data", onKey);
+
+    process.stderr.write(chalk.dim(`   waiting for a peer to connect, or press any key to start the shell now...\n`));
+
+    function cleanup(): void {
+      unsubscribePeer();
+      process.stdin.off("data", onKey);
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode(wasRaw);
+      }
+      // Don't pause stdin — startWrapper is about to take it over.
+    }
+  });
 }
 
 function resolveCommand(opts: HostOptions): { command: string; args: string[] } {
   if (opts.command) {
     return { command: opts.command, args: opts.args ?? [] };
   }
-  // Default to the user's shell.
   if (process.platform === "win32") {
     return { command: process.env.COMSPEC ?? "pwsh.exe", args: [] };
   }
@@ -76,8 +134,6 @@ function resolveCommand(opts: HostOptions): { command: string; args: string[] } 
 }
 
 function printBanner(r: { token: string; addr: string; bindHost: string; expiresInSec: number }): void {
-  // Banner goes to the user's stderr so it doesn't disturb the wrapped
-  // program's stdout. The PTY child sees an unmodified terminal.
   const lines = [
     "",
     chalk.cyan("📡 telepathy host ready"),
@@ -89,12 +145,4 @@ function printBanner(r: { token: string; addr: string; bindHost: string; expires
     "",
   ];
   process.stderr.write(`${lines.join("\n")}\n`);
-}
-
-// Detached spawn helper used by `telepathy shell` if it wants to launch a
-// brand-new wrapper window instead of taking over the current terminal.
-// Currently unused; left for future use when we add the "open new wt tab"
-// flow as an alternative to in-place wrap.
-export function spawnDetached(command: string, args: string[]): void {
-  spawn(command, args, { stdio: "ignore", detached: true }).unref();
 }
