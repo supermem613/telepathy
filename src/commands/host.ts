@@ -78,21 +78,21 @@ export async function runHost(opts: HostOptions): Promise<void> {
       expiresInSec = result.expiresInSec;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      // EADDRINUSE is the #1 cause of "telepathy host hangs on second run":
-      // a prior host (or some unrelated process) is still bound to 7423.
-      // Bail loudly with a fix path instead of silently falling through to
-      // the keypress hold — that hold has no token banner and looks like
-      // a hang.
+      // EADDRINUSE here means the user passed `-p <port>` explicitly and
+      // that port is taken. (Without `-p`, acceptStart auto-falls back from
+      // DEFAULT_PORT to an OS-assigned port — see api.ts.) The user asked
+      // for that specific port for a reason (firewall rule, dev setup), so
+      // surface the conflict with a fix path instead of silently picking
+      // a different one.
       if (/EADDRINUSE/i.test(msg)) {
-        const port = opts.port ?? 7423;
+        const port = opts.port!;
         const holder = describePortHolder(port);
         process.stderr.write(chalk.red(`telepathy host: port ${port} is already in use`));
         if (holder) {
           process.stderr.write(chalk.red(` by ${holder}`));
         }
         process.stderr.write(chalk.red(`.\n\n`));
-        process.stderr.write(chalk.dim(`A previous \`telepathy host\` may still be running, or another app is bound to ${port}.\n`));
-        process.stderr.write(chalk.dim(`Fixes:\n`));
+        process.stderr.write(chalk.dim(`You explicitly requested port ${port} with \`-p\`. Fixes:\n`));
         if (holder) {
           const m = /pid (\d+)/.exec(holder);
           if (m) {
@@ -100,7 +100,7 @@ export async function runHost(opts: HostOptions): Promise<void> {
             process.stderr.write(chalk.dim(`                      kill ${m[1]}                                 (POSIX)\n`));
           }
         }
-        process.stderr.write(chalk.dim(`  • use a different port:  telepathy host -p 7430\n`));
+        process.stderr.write(chalk.dim(`  • drop \`-p\` to let telepathy auto-pick a free port\n`));
         process.exit(1);
       }
       // Other errors (e.g. permission denied on a privileged port) — same

@@ -71,9 +71,21 @@
     for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
     return out;
   }
+  // See wall.html for rationale — strip xterm.js auto-replies to DA1/DA2
+  // queries and DSR responses so they don't get forwarded to the host's
+  // PTY as "user input" and echoed as literal text on screen.
+  function stripXtermReplies(s) {
+    return s
+      .replace(/\x1b\[\?[\d;]*c/g, "")
+      .replace(/\x1b\[>[\d;]*c/g, "")
+      .replace(/\x1b\[\d+;\d+R/g, "")
+      .replace(/\x1b\[\d+n/g, "");
+  }
   term.onData((data) => {
+    const filtered = stripXtermReplies(data);
+    if (!filtered) return;
     if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "input", data }));
+      ws.send(JSON.stringify({ type: "input", data: filtered }));
     }
   });
   window.addEventListener("resize", () => { try { fit.fit(); } catch (_) {} });

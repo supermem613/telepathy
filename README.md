@@ -53,7 +53,7 @@ Bare `telepathy` prints version + the full help. `telepathy <command> --help` fo
 ### Common flag patterns
 
 ```bash
-telepathy host -p 7430                                # different port (when 7423 is busy)
+telepathy host -p 7430                                # pin a specific port (default tries 7423, falls back to a random free port)
 telepathy host --no-listen -- node my-tui.js          # wrap a command without exposing it on the LAN
 telepathy host -- pwsh -NoProfile                     # wrap a specific shell (everything after `--` is the child command)
 telepathy connect <token> --as box-a                  # rename the local peer alias

@@ -3,6 +3,7 @@
 // testable and reusable.
 
 import type { Server as TlsServer } from "node:tls";
+import { createServer as createNetServer } from "node:net";
 import { encodeToken, decodeToken, generateSecret, pickLocalIPv4 } from "./token.js";
 import { dial, startListener } from "./transport.js";
 import {
@@ -61,7 +62,6 @@ export async function acceptStart(opts: AcceptOptions = {}): Promise<AcceptResul
     acceptState.server.close();
     acceptState = undefined;
   }
-  const port = opts.port ?? DEFAULT_PORT;
   const advertisedHost = opts.advertise ?? pickLocalIPv4();
   // Bind on all interfaces by default. Advertising a specific IPv4 in the
   // token still tells peers where to dial, but binding to 0.0.0.0 lets
@@ -70,8 +70,24 @@ export async function acceptStart(opts: AcceptOptions = {}): Promise<AcceptResul
   const bindHost = opts.bind ?? "0.0.0.0";
   const secret = generateSecret();
   const fallbackAlias = getLocalAlias();
+  // Default port strategy: try DEFAULT_PORT first (memorable, firewall-
+  // friendly, predictable for `telepathy doctor`). If it's taken and the
+  // user did NOT pass `-p`, fall back to OS-assigned (port 0) so a second
+  // `telepathy host` on the same box "just works" — the token already
+  // encodes the port (token.ts:42-44), so the dialer needs no extra
+  // information. If `-p` was passed explicitly, do NOT auto-fall back:
+  // the user asked for that port for a reason (firewall rule, dev setup),
+  // so let EADDRINUSE bubble up to the caller for a loud error.
+  let chosenPort: number;
+  if (opts.port !== undefined) {
+    chosenPort = opts.port;
+  } else if (await isPortFree(DEFAULT_PORT, bindHost)) {
+    chosenPort = DEFAULT_PORT;
+  } else {
+    chosenPort = 0;
+  }
   const server = startListener({
-    port,
+    port: chosenPort,
     bindHost,
     secret,
     onFrame: () => undefined,
@@ -81,6 +97,11 @@ export async function acceptStart(opts: AcceptOptions = {}): Promise<AcceptResul
     server.once("listening", resolve);
     server.once("error", reject);
   });
+  const addr = server.address();
+  if (!addr || typeof addr === "string") {
+    throw new Error(`acceptStart: listener reported unexpected address ${JSON.stringify(addr)}`);
+  }
+  const port = addr.port;
   const token = encodeToken({ host: advertisedHost, port, secret });
   acceptState = {
     server,
@@ -97,6 +118,20 @@ export async function acceptStart(opts: AcceptOptions = {}): Promise<AcceptResul
     bindHost,
     expiresInSec: Math.round(ACCEPT_TOKEN_TTL_MS / 1000),
   };
+}
+
+function isPortFree(port: number, bindHost: string): Promise<boolean> {
+  // Probe the same bindHost the real listener will use. Probing 127.0.0.1
+  // when the real listener binds 0.0.0.0 would miss collisions where another
+  // process bound to a specific NIC. Race-prone in theory (probe → real
+  // listen window), but no concurrent telepathy starts realistically race
+  // for the SAME default port.
+  return new Promise((res) => {
+    const probe = createNetServer();
+    probe.once("error", () => res(false));
+    probe.once("listening", () => probe.close(() => res(true)));
+    probe.listen(port, bindHost);
+  });
 }
 
 export function acceptStop(): boolean {

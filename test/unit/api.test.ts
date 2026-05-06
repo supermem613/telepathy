@@ -1,7 +1,10 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { connect as tlsConnect } from "node:tls";
+import { createServer as createNetServer } from "node:net";
 import { acceptStart, acceptStop, connectPeer, describePeers, disconnectPeer } from "../../src/core/api.js";
+import { decodeToken } from "../../src/core/token.js";
+import { DEFAULT_PORT } from "../../src/core/protocol.js";
 
 // Pick a high random port per test so parallel runs don't collide.
 function randomPort(): number {
@@ -57,6 +60,71 @@ describe("api.acceptStart / connectPeer round-trip", () => {
       assert.equal(describePeers().listening !== undefined, true);
     } finally {
       acceptStop();
+    }
+  });
+
+  it("auto-falls back to a random port when DEFAULT_PORT is taken (multi-host on same box)", async () => {
+    // Squat on DEFAULT_PORT with a plain TCP server so acceptStart() with
+    // no explicit port hits EADDRINUSE on its first try and must fall back.
+    // If the world already squats it (e.g. a real `telepathy host` is
+    // running on this dev box), skip the in-test squatter — the world
+    // already provides the precondition.
+    let squatter: ReturnType<typeof createNetServer> | undefined;
+    try {
+      const s = createNetServer();
+      await new Promise<void>((resolve, reject) => {
+        s.once("error", reject);
+        s.listen(DEFAULT_PORT, "0.0.0.0", () => resolve());
+      });
+      squatter = s;
+    } catch (err) {
+      const code = (err as { code?: string } | null)?.code;
+      if (code !== "EADDRINUSE") {
+        throw err;
+      }
+      // External host already on 7423 — perfect, just run the assertion.
+    }
+    try {
+      const accept = await acceptStart({});  // no port → DEFAULT_PORT then 0
+      try {
+        const decoded = decodeToken(accept.token);
+        // Must have picked SOME port that isn't the squatted one.
+        assert.notEqual(decoded.port, DEFAULT_PORT, "expected fallback to a different port");
+        assert.ok(decoded.port > 0 && decoded.port <= 65535, `decoded port ${decoded.port} out of range`);
+        // The token's port must match what acceptStart returned in `addr`.
+        assert.equal(accept.addr.endsWith(`:${decoded.port}`), true, `addr ${accept.addr} does not end with port ${decoded.port}`);
+        // And the dialer can connect to it (proves the listener is actually up on the new port).
+        const peer = await connectPeer({ token: accept.token });
+        assert.equal(peer.alias.length > 0, true);
+      } finally {
+        disconnectPeer({});
+        acceptStop();
+      }
+    } finally {
+      if (squatter) {
+        await new Promise<void>((resolve) => squatter!.close(() => resolve()));
+      }
+    }
+  });
+
+  it("explicit -p collisions still hard-fail (no silent port substitution)", async () => {
+    const port = randomPort();
+    const squatter = createNetServer();
+    await new Promise<void>((resolve, reject) => {
+      squatter.once("error", reject);
+      squatter.listen(port, "0.0.0.0", () => resolve());
+    });
+    try {
+      await assert.rejects(
+        () => acceptStart({ port }),
+        (err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          return /EADDRINUSE/i.test(msg);
+        },
+        "expected acceptStart with explicit port to throw EADDRINUSE",
+      );
+    } finally {
+      await new Promise<void>((resolve) => squatter.close(() => resolve()));
     }
   });
 });

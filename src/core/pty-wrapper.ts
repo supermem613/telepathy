@@ -96,6 +96,11 @@ export async function startWrapper(opts: StartWrapperOptions): Promise<WrapperSt
   const pty = ptyMod.spawn(opts.command, opts.args, ptyOpts);
   let ringBuffer: Buffer = Buffer.from("");
   const subscribers = new Set<Socket>();
+  // Per-subscriber last-reported size. A subscriber that has not yet sent
+  // a `resize` is absent from this map and contributes no constraint to
+  // recomputeSize() (its initial paint uses pty's current cols/rows from
+  // the hello message).
+  const subscriberSizes = new Map<Socket, { cols: number; rows: number }>();
 
   // DEC private mode state — see src/core/dec-modes.ts for rationale.
   // Without this, late IPC subscribers (and downstream remote peers via
@@ -116,6 +121,56 @@ export async function startWrapper(opts: StartWrapperOptions): Promise<WrapperSt
   };
 
   const attachStdio = opts.attachStdio !== false;
+
+  // Sizing model: PTY cols/rows = MIN over { host stdout (when attached),
+  // every subscriber that has reported a size }. Both surfaces are then
+  // ≥ PTY in both dimensions, so neither garbles regardless of which is
+  // bigger; the larger surface gets letterbox/pillarbox empty space.
+  // Triggered on: host stdout resize, subscriber connect, subscriber
+  // resize, subscriber disconnect. When the size actually changes, the
+  // new size is fanned out to all subscribers so they redraw to match.
+  const recomputeSize = (): void => {
+    let minCols = Number.POSITIVE_INFINITY;
+    let minRows = Number.POSITIVE_INFINITY;
+    if (attachStdio && process.stdout.isTTY) {
+      const c = process.stdout.columns;
+      const r = process.stdout.rows;
+      if (c) {
+        minCols = Math.min(minCols, c);
+      }
+      if (r) {
+        minRows = Math.min(minRows, r);
+      }
+    }
+    for (const size of subscriberSizes.values()) {
+      minCols = Math.min(minCols, size.cols);
+      minRows = Math.min(minRows, size.rows);
+    }
+    // No constraints at all (no host TTY + no subscriber sizes yet) →
+    // keep current PTY size; nothing to recompute against.
+    if (!Number.isFinite(minCols) || !Number.isFinite(minRows)) {
+      return;
+    }
+    if (minCols === pty.cols && minRows === pty.rows) {
+      return;
+    }
+    if (isDebug()) {
+      process.stderr.write(`[telepathy/wrapper] resize ${minCols}x${minRows} (was ${pty.cols}x${pty.rows})\n`);
+    }
+    try {
+      pty.resize(minCols, minRows);
+    } catch {
+      // Some terminals don't support resize; ignore.
+    }
+    const resizeMsg: WrapperToExtension = { type: "resize", cols: minCols, rows: minRows };
+    for (const sub of subscribers) {
+      try {
+        sendIpc(sub, resizeMsg);
+      } catch {
+        // ignore
+      }
+    }
+  };
 
   pty.onData((data) => {
     // node-pty emits already-decoded UTF-8 strings. Re-encode to UTF-8
@@ -202,22 +257,11 @@ export async function startWrapper(opts: StartWrapperOptions): Promise<WrapperSt
       pty.write(chunk.toString("utf8"));
     };
     process.stdin.on("data", stdinHandler);
+    // Host stdout resize → recompute MIN. Whether the host is currently
+    // the smaller or larger surface, the new MIN gets pushed to the PTY
+    // and broadcast to all walls.
     resizeHandler = (): void => {
-      const newCols = process.stdout.columns ?? cols;
-      const newRows = process.stdout.rows ?? rows;
-      try {
-        pty.resize(newCols, newRows);
-      } catch {
-        // Some terminals don't support resize; ignore.
-      }
-      const resizeMsg: WrapperToExtension = { type: "resize", cols: newCols, rows: newRows };
-      for (const sub of subscribers) {
-        try {
-          sendIpc(sub, resizeMsg);
-        } catch {
-          // ignore
-        }
-      }
+      recomputeSize();
     };
     process.stdout.on("resize", resizeHandler);
   }
@@ -245,16 +289,20 @@ export async function startWrapper(opts: StartWrapperOptions): Promise<WrapperSt
           pty.write(data.toString("utf8"));
         } else if (msg.type === "resize") {
           if (isDebug()) {
-            process.stderr.write(`[telepathy/wrapper] resize ${msg.cols}x${msg.rows}\n`);
+            process.stderr.write(`[telepathy/wrapper] subscriber resize ${msg.cols}x${msg.rows}\n`);
           }
-          try {
-            pty.resize(msg.cols, msg.rows);
-          } catch {
-            // Some terminals don't support resize; ignore.
-          }
+          subscriberSizes.set(socket, { cols: msg.cols, rows: msg.rows });
+          recomputeSize();
         }
       }, () => {
         subscribers.delete(socket);
+        // Subscriber gone → its size constraint is lifted. Recompute MIN
+        // over remaining { host stdout, other subscribers }; the PTY may
+        // now grow, which the local terminal / remaining walls will pick
+        // up via the broadcast resize.
+        if (subscriberSizes.delete(socket)) {
+          recomputeSize();
+        }
       });
     },
   });

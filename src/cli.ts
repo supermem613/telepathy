@@ -34,7 +34,7 @@ program
 program
   .command("host")
   .description("Wrap a shell (or any command after `--`) under a ConPTY and expose it to peers")
-  .option("-p, --port <port>", "TCP port to listen on (default: 7423)", (v) => parseInt(v, 10))
+  .option("-p, --port <port>", "TCP port to listen on (default: try 7423, fall back to a random free port)", (v) => parseInt(v, 10))
   .option("-b, --bind <host>", "Interface to bind to (default: 0.0.0.0 — all interfaces)")
   .option("-a, --advertise <host>", "IP encoded into the join token (default: detected LAN IPv4)")
   .option("--no-listen", "Run the wrapper without binding a peer listener (local-only)")

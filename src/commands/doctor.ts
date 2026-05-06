@@ -48,9 +48,9 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
   const portFree = await isPortFree(DEFAULT_PORT);
   checks.push({
     name: `port ${DEFAULT_PORT} free`,
-    ok: portFree,
-    detail: portFree ? "available" : "in use",
-    hint: portFree ? undefined : "another telepathy host or process is bound — pass `--port <n>` to pick a different port.",
+    ok: true,
+    optional: true,
+    detail: portFree ? "available" : "in use (telepathy host will auto-pick a free port)",
   });
 
   const electron = findElectron();

@@ -305,6 +305,23 @@
     for (let i = 0; i < bin.length; i++) { out[i] = bin.charCodeAt(i); }
     return out;
   }
+  // xterm.js auto-replies to terminal capability queries it sees in
+  // incoming bytes (DA1, DA2, DSR cursor position, DSR status). When the
+  // host's replay buffer contains a query the wrapped child sent earlier
+  // (Copilot CLI, vim, etc. probe terminal type on startup), xterm
+  // dutifully replies through onData. Forwarding that reply to the host's
+  // PTY makes the wrapped child receive it as "user input" and echo it as
+  // literal text — e.g. you see "[?1;2c" appear on screen on connect.
+  // Strip those replies before forwarding. Real keystrokes never look
+  // like these patterns; pasted ANSI escape sequences containing them
+  // are an accepted edge case.
+  function stripXtermReplies(s) {
+    return s
+      .replace(/\x1b\[\?[\d;]*c/g, "")  // DA1 reply: ESC[?1;2c, ESC[?6;22c, ...
+      .replace(/\x1b\[>[\d;]*c/g, "")   // DA2 reply: ESC[>0;276;0c, ...
+      .replace(/\x1b\[\d+;\d+R/g, "")   // DSR cursor position: ESC[24;80R
+      .replace(/\x1b\[\d+n/g, "");      // DSR status: ESC[0n, ESC[3n
+  }
   async function api(method, path, body) {
     const r = await fetch(path + (path.includes("?") ? "&" : "?") + "t=" + encodeURIComponent(TOKEN), {
       method,
@@ -465,6 +482,23 @@
         // \x1b[2J = erase screen, \x1b[3J = erase scrollback,
         // \x1b[H = cursor home. Mode state untouched.
         try { term.write("\x1b[2J\x1b[3J\x1b[H"); } catch (_) { /* ignore */ }
+        // Nudge: send the same size again ~250ms later. Some TUIs
+        // (Copilot CLI, vim, anything that draws tables / boxes via
+        // absolute positioning) only repaint on receipt of a SIGWINCH;
+        // when the wall is mid-resize-drag, the host sees a flurry of
+        // sizes and may suppress the repaint until things settle. The
+        // second send is a no-op for sizing (same cols/rows) but the
+        // redundant SIGWINCH triggers a clean repaint at the final size.
+        // Debounced so a long drag doesn't fire dozens of nudges.
+        if (entry.nudgeTimer) clearTimeout(entry.nudgeTimer);
+        entry.nudgeTimer = setTimeout(() => {
+          entry.nudgeTimer = null;
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          // Re-send WITHOUT the lastSentCols/Rows guard — that's the
+          // whole point of the nudge: poke the host even when our local
+          // state thinks "nothing changed".
+          try { ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows })); } catch (_) { /* ignore */ }
+        }, 250);
       }
       entry.sendResizeNow = sendResizeNow;
       ws.onopen = () => {
@@ -504,8 +538,10 @@
       // start arriving AND keystrokes start flowing — no need to detect
       // the capability flip on the client.
       term.onData((data) => {
+        const filtered = stripXtermReplies(data);
+        if (!filtered) { return; }
         if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "input", data }));
+          ws.send(JSON.stringify({ type: "input", data: filtered }));
         }
       });
       tabs.set(peer.alias, entry);
@@ -662,6 +698,37 @@
       try { t.sendResizeNow && t.sendResizeNow(); } catch (_) {}
     }
   });
+
+  // Focus restoration. After alt-tab away+back, the BrowserWindow has
+  // keyboard focus but xterm's hidden textarea may not — keystrokes go
+  // nowhere. Re-grab focus on every window-focus event AND on any
+  // keydown that lands outside xterm. The keydown path is the safety
+  // net for cases where the focus event doesn't fire (focus shifted
+  // while window was hidden, OS-level focus weirdness, etc.).
+  function focusActiveTerm() {
+    if (!activeAlias) return;
+    const t = tabs.get(activeAlias);
+    if (!t || !t.term) return;
+    try { t.term.focus(); } catch (_) { /* ignore */ }
+  }
+  window.addEventListener("focus", focusActiveTerm);
+  // Capture-phase keydown so we see EVERY key, including ones xterm
+  // would have absorbed if it were focused. If the active term doesn't
+  // already have focus, grab it. Modifier-only chords (Ctrl/Alt/Shift
+  // alone, no character) don't trigger refocus — we don't want to steal
+  // focus from menu navigation. We also skip when the user is typing
+  // into the rename input or the connect modal's token field.
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Control" || e.key === "Alt" || e.key === "Shift" || e.key === "Meta") return;
+    const tag = (e.target && e.target.tagName) || "";
+    if (tag === "INPUT" || tag === "TEXTAREA") return;
+    if (!activeAlias) return;
+    const t = tabs.get(activeAlias);
+    if (!t || !t.term || !t.termHost) return;
+    // Already focused? Nothing to do.
+    if (t.termHost.contains(document.activeElement)) return;
+    try { t.term.focus(); } catch (_) { /* ignore */ }
+  }, true);
 })();
 </script>
 </body>
