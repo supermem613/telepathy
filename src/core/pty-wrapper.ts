@@ -9,6 +9,7 @@
 
 import { startIpcServer, sendIpc, readIpc, type WrapperToExtension, type ExtensionToWrapper } from "./ipc.js";
 import { isDebug } from "./debug.js";
+import { trackDecModes, buildReplayWithModes } from "./dec-modes.js";
 import type { Server, Socket } from "node:net";
 
 export type Pty = {
@@ -72,15 +73,35 @@ export async function startWrapper(opts: StartWrapperOptions): Promise<WrapperSt
   }
   const cols = process.stdout.columns ?? 132;
   const rows = process.stdout.rows ?? 42;
-  const pty = ptyMod.spawn(opts.command, opts.args, {
+  // useConptyDll: true picks node-pty's bundled conpty.dll (newer than
+  // the OS-bundled one) which fixes known VT-passthrough bugs —
+  // specifically, the bug where alt-screen-mode TUIs render their
+  // updates as scroll output instead of in-place redraws when wrapped.
+  // conptyInheritCursor preserves cursor state across the wrapper
+  // boundary so absolute-position writes from the child land at the
+  // expected row/col on the host's terminal.
+  // Cast: IWindowsPtyForkOptions is the right shape on win32 but
+  // node-pty's main spawn() type is IPtyForkOptions (POSIX-flavored)
+  // and doesn't expose the Windows-only flags; the underlying impl
+  // accepts them at runtime.
+  const ptyOpts = {
     name: "xterm-256color",
     cols,
     rows,
     cwd: opts.cwd,
     env: opts.env,
-  });
+    useConptyDll: true,
+    conptyInheritCursor: true,
+  } as Parameters<typeof ptyMod.spawn>[2];
+  const pty = ptyMod.spawn(opts.command, opts.args, ptyOpts);
   let ringBuffer: Buffer = Buffer.from("");
   const subscribers = new Set<Socket>();
+
+  // DEC private mode state — see src/core/dec-modes.ts for rationale.
+  // Without this, late IPC subscribers (and downstream remote peers via
+  // host-pty-shim → orchestrator) miss alt-screen / focus / mouse
+  // enables that scrolled out of the ring buffer.
+  const enabledDecModes = new Map<string, boolean>();
 
   const broadcastFrame = (chunk: Buffer): void => {
     const dataBase64 = chunk.toString("base64");
@@ -105,6 +126,7 @@ export async function startWrapper(opts: StartWrapperOptions): Promise<WrapperSt
     if (attachStdio) {
       process.stdout.write(chunk);
     }
+    trackDecModes(chunk, enabledDecModes);
     ringBuffer = appendBounded(ringBuffer, chunk, RING_BUFFER_BYTES);
     broadcastFrame(chunk);
   });
@@ -209,7 +231,7 @@ export async function startWrapper(opts: StartWrapperOptions): Promise<WrapperSt
         type: "hello",
         cols: pty.cols,
         rows: pty.rows,
-        replayBase64: ringBuffer.toString("base64"),
+        replayBase64: buildReplayWithModes(ringBuffer, enabledDecModes),
       };
       try {
         sendIpc(socket, hello);

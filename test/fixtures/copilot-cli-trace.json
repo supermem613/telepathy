@@ -1,0 +1,44 @@
+{
+  "cols": 132,
+  "rows": 40,
+  "durationMs": 9026,
+  "totalBytes": 8023,
+  "phases": [
+    {
+      "phase": "boot",
+      "atMs": 0,
+      "totalBytesBefore": 0
+    },
+    {
+      "phase": "type-text",
+      "atMs": 1039,
+      "totalBytesBefore": 16
+    },
+    {
+      "phase": "slash",
+      "atMs": 1696,
+      "totalBytesBefore": 16
+    },
+    {
+      "phase": "arrow",
+      "atMs": 2352,
+      "totalBytesBefore": 16
+    },
+    {
+      "phase": "esc",
+      "atMs": 3010,
+      "totalBytesBefore": 16
+    },
+    {
+      "phase": "ctrl-c",
+      "atMs": 6807,
+      "totalBytesBefore": 7232
+    },
+    {
+      "phase": "exit",
+      "atMs": 7572,
+      "totalBytesBefore": 7400
+    }
+  ],
+  "exitCode": 1
+}

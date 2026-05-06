@@ -8,6 +8,7 @@
 import { connectIpcClient, sendIpc, readIpc, type WrapperToExtension, type ExtensionToWrapper } from "../core/ipc.js";
 import type { Socket } from "node:net";
 import type { LocalPty } from "../core/orchestrator.js";
+import { trackDecModes } from "../core/dec-modes.js";
 
 const RING_BUFFER_BYTES = 64 * 1024;
 
@@ -26,6 +27,7 @@ export async function attachToWrapperIfPresent(pipePath?: string): Promise<Local
     cols: process.stdout.columns ?? 132,
     rows: process.stdout.rows ?? 42,
     ringBuffer: Buffer.from(""),
+    enabledDecModes: new Map<string, boolean>(),
     subscribers: new Set(),
     resizeSubscribers: new Set(),
   };
@@ -42,9 +44,14 @@ export async function attachToWrapperIfPresent(pipePath?: string): Promise<Local
       state.cols = msg.cols;
       state.rows = msg.rows;
       state.ringBuffer = Buffer.from(msg.replayBase64, "base64");
+      // The wrapper's hello may already include a DEC-mode prelude
+      // (`\x1b[?Nh` per currently-set mode). Re-track from the replay
+      // bytes so our state matches whatever modes are live right now.
+      trackDecModes(state.ringBuffer, state.enabledDecModes);
       helloResolve?.();
     } else if (msg.type === "frame") {
       const chunk = Buffer.from(msg.dataBase64, "base64");
+      trackDecModes(chunk, state.enabledDecModes);
       state.ringBuffer = appendBounded(state.ringBuffer, chunk, RING_BUFFER_BYTES);
       for (const sub of state.subscribers) {
         try {

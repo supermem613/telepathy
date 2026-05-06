@@ -48,11 +48,10 @@
   function sendResize() {
     if (ws.readyState !== WebSocket.OPEN) return;
     try { ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows })); } catch (_) { /* ignore */ }
-    // Same rationale as wall.html: the host's TUI uses absolute cursor
-    // positioning, so a resize without a screen-clear leaves stale rows
-    // behind from the pre-resize layout. Clearing forces the host's
-    // SIGWINCH-triggered redraw to paint over a clean buffer.
-    try { term.reset(); } catch (_) { /* ignore */ }
+    // Same rationale as wall.html: clear visible content + scrollback
+    // without resetting terminal modes (alt-screen, focus, etc.) so
+    // alt-screen TUIs keep redrawing in place.
+    try { term.write("\x1b[2J\x1b[3J\x1b[H"); } catch (_) { /* ignore */ }
   }
   ws.onopen = () => { sendResize(); };
   term.onResize(sendResize);

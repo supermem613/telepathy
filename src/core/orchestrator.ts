@@ -23,12 +23,21 @@ import type {
 } from "./protocol.js";
 import type { Frame } from "./transport.js";
 import { isDebug } from "./debug.js";
+import { buildReplayWithModes } from "./dec-modes.js";
 
 export type LocalPty = {
   state: {
     cols: number;
     rows: number;
     ringBuffer: Buffer;
+    // Explicit DEC private mode state (CSI ?Nh / ?Nl) seen so far. Both
+    // directions tracked because some modes default to set (?25 cursor,
+    // ?7 wrap). Prepended to remote-peer replays so late joiners enter
+    // the host's current mode state BEFORE the ring's playback —
+    // without this, a wall connecting after the ring rolled past the
+    // initial mode-set sequences ends up in main-buffer mode and every
+    // TUI redraw scrolls instead of overwriting.
+    enabledDecModes: Map<string, boolean>;
     subscribers: Set<(frame: { dataBase64: string }) => void>;
     resizeSubscribers: Set<(size: { cols: number; rows: number }) => void>;
   };
@@ -437,7 +446,7 @@ function servePtySubscribe(peer: Peer, requestId: string): void {
     ok: true,
     cols: localPty.state.cols,
     rows: localPty.state.rows,
-    replayBase64: localPty.state.ringBuffer.toString("base64"),
+    replayBase64: buildReplayWithModes(localPty.state.ringBuffer, localPty.state.enabledDecModes),
   });
 }
 

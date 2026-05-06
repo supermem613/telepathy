@@ -1,0 +1,54 @@
+[?9001h[?1004h[?25l[2J[m[H]0;C:\WINDOWS\system32\cmd.exe[?25h[?1049h[?25l[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K[H[?25h[?u[?25l[?1002h[?1006h[?2004h[22;2t]0;GitHub Copilot[?2004h[?2026h[?2026l[35m╭──────────────────────────────────────────────────────────────────────────────────────────────────╮[K
+│  [36m╭─╮╭─╮[90X[35m[90C│[K
+│  [36m╰─╯╰─╯  [35m[1mGitHub Copilot[m v1.0.42[66X[35m[66C│[K
+│  █ [32m▘▝ [35m█  [mDescribe a task to get started.[57X[35m[57C│[K
+│   ▔▔▔▔                                                                                           │[K
+│  [mTip: [36m/plugin [mManage plugins and plugin marketplaces[45X[35m[45C│[K
+│  [mCopilot uses AI. Check for mistakes.[60X[35m[60C│[K
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯[K[32C[m[?2026h[?2026l[34m[10;1H● [m💡 No copilot instructions found. Run /init to generate a copilot-instructions.md file for this project.[K[26C[?2004h[?1004h[?1006l[?1002l[?1002h[?1006h[?2026h[?2026l[35m[33;1H● Loading environment: 1 custom instruction, 8 hooks[K[m[35;1H ~\repos\telepathy [⎇ main*%][K[2m
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[22m❯ [7m [27m[K[2m
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[22m [1mesc[22m again to rewind                                                           Claude Opus 4.7 (1M context)(Internal only) · medium [?2026h[?2026l[35m[33;1H◉ Loading environment: 1 custom instruction, 8 hooks[K[80C[m[?2026h[?2026l[35m◉ Loading environment: 1 custom instruction, 8 hooks, 49 skills[K[69C[?2026h[?2026l[m[35m● Loading environment: 1 custom instruction, 8 hooks, 49 skills[K[69C[?2026h[?2026l[m[39;1H [1m/[22m commands · [1m?[22m help                                                           Claude Opus 4.7 (1M context)(Internal only) · medium [?2026h[?2026l[35m[33;1H◉ Loading environment: 1 custom instruction, 8 hooks, 49 skills[K[69C[?2026h[?2026l[m[35m◉ Loading environment: 1 custom instruction, 1 extension, 8 hooks, 49 skills[K[56C[m[?2026h[?2026l[35m● Loading environment: 1 custom instruction, 1 extension, 8 hooks, 49 skills[K[56C[?2026h[?2026l[m[35m[4;1H│  █ [32m╴╶ [35m█  [mDescribe a task to get started.[57X[35m[57C│[K[32C[m[?1006l[?1002l[?1002h[?1006h[?2026h[?2026l[35m[32;1H● Loading environment: 1 custom instruction, 1 extension, 8 hooks, 49 skills[K[m
+[K
+ ~\repos\telepathy [⎇ main*%][K[2m
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[22m❯ [7m [27m                                                                                                                                 [2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[22m [1m/[22m commands · [1m?[22m help                                                           Claude Opus 4.7 (1M context)(Internal only) · medium    [38;5;114m?% ---------- [m[2m0/?[22m [38;5;245m│ 1s[K[107C[?2026h[?2026l[m[35m[4;1H│  █    █  [mDescribe a task to get started.[57X[35m[57C│[K[32C[?2026h[?2026l[m[35m│  █ [32m╴╶ [35m█  [mDescribe a task to get started.[57X[35m[57C│[K[32C[m[?2026h[?2026l[35m[32;1H◉ Loading environment: 1 custom instruction, 1 extension, 8 hooks, 49 skills[K[56C[?2026h[?2026l[m[35m[4;1H│  █ [32m▘▝ [35m█  [mDescribe a task to get started.[57X[35m[57C│[K[32C[?2026h[?2026l[m[35m[32;1H◎ Loading environment: 1 custom instruction, 1 extension, 8 hooks, 49 skills[K[56C[?2026h[?2026l[m[35m◎ Loading environment: 1 custom instruction, 1 extension, 8 hooks, 49 skills, 1 MCP server[K[42C[?2026h[?2026l[m[35m● Loading environment: 1 custom instruction, 1 extension, 8 hooks, 49 skills, 1 MCP server[K[42C[?1006l[?1002l[?1002h[?1006h[?2026h[?2026l[m[K[132C[?2026h[?2026l[39;1H   [38;5;114m0% ░░░░░░░░░░ [m[2m0/1.0m[22m [38;5;245m│ 1s[K[104C[m[?2026h[?2026l[34m[12;1H● [mEnvironment loaded: 1 custom instruction, 1 extension, 8 hooks, 49 skills, 1 MCP server[K[43C[?2026h[?2026l[35m[4;1H│  █ [32m╴╶ [35m█  [mDescribe a task to get started.[57X[35m[57C│[K[32C[m[?2026h[?2026l[35m│  █    █  [mDescribe a task to get started.[57X[35m[57C│[K[32C[m[?2026h[?2026l[35m│  █ [32m╴╶ [35m█  [mDescribe a task to get started.[57X[35m[57C│[K[32C[m[?2026h[?2026l[35m│  █ [32m▘▝ [35m█  [mDescribe a task to get started.[57X[35m[57C│[K[32C[m[?2026h[?2026l[39;1H   [38;5;114m0% ░░░░░░░░░░ [m[2m0/1.0m[22m [38;5;245m│ 2s[K[104C[m[?2026h[?2026l[35m[4;1H│  █ [32m╴╶ [35m█  [mDescribe a task to get started.[57X[35m[57C│[K[32C[m[?2026h[?2026l[35m│  █    █  [mDescribe a task to get started.[57X[35m[57C│[K[32C[m[?2026h[?2026l[35m│  █ [32m╴╶ [35m█  [mDescribe a task to get started.[57X[35m[57C│[K[32C[m[?2026h[?2026l[35m│  █ [32m▘▝ [35m█  [mDescribe a task to get started.[57X[35m[57C│[K[32C[?2026h[?2026l[m[38;1H [1mctrl+c[22m again to exit                                                          Claude Opus 4.7 (1M context)(Internal only) · medium [?2004l[?1006l[?1002l[?1002h[?1006h[?2026h[?2026l[34;1H[K
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                
+[K[132C[?9001l[?1004l

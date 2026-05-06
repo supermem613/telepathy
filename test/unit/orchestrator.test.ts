@@ -17,6 +17,7 @@ function fakeLocalPty(): LocalPty & { _frames: Set<{ dataBase64: string }> } {
       cols: 80,
       rows: 24,
       ringBuffer: Buffer.from("hello world"),
+      enabledDecModes: new Map<string, boolean>(),
       subscribers,
       resizeSubscribers,
     },

@@ -458,17 +458,13 @@
         entry.lastSentCols = cols;
         entry.lastSentRows = rows;
         try { ws.send(JSON.stringify({ type: "resize", cols, rows })); } catch (_) { /* ignore */ }
-        // ALWAYS clear xterm on resize, including the very first one. The
-        // replay frame from `pty_subscribe_ack` paints content at the
-        // host's pre-resize PTY size (typically 132×42 wrapper default).
-        // Once we resize the host, its TUI (Copilot CLI / vim / etc.)
-        // redraws via cursor-position writes — those writes do NOT clear
-        // unaffected rows, so old replay rows linger as ghost text. The
-        // host redraws within ~50ms after SIGWINCH, so the brief blank
-        // is invisible in practice and beats the alternative of stale
-        // banner artifacts every time the user resizes (or even just
-        // launches the wall).
-        try { term.reset(); } catch (_) { /* ignore */ }
+        // Clear visible content + scrollback WITHOUT resetting terminal
+        // modes. `term.reset()` (RIS) wipes alt-screen/focus/mouse state
+        // and drops alt-screen TUIs (Copilot CLI, vim, etc.) into the
+        // main buffer where every redraw scrolls instead of overwriting.
+        // \x1b[2J = erase screen, \x1b[3J = erase scrollback,
+        // \x1b[H = cursor home. Mode state untouched.
+        try { term.write("\x1b[2J\x1b[3J\x1b[H"); } catch (_) { /* ignore */ }
       }
       entry.sendResizeNow = sendResizeNow;
       ws.onopen = () => {
