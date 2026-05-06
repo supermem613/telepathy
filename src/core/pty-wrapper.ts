@@ -121,6 +121,16 @@ export async function startWrapper(opts: StartWrapperOptions): Promise<WrapperSt
         // ignore
       }
     }
+    if (attachStdio && process.stdout.isTTY) {
+      // Clear the screen + scrollback + reset cursor when the wrapped
+      // shell exits, so the user's terminal returns to a clean state
+      // (no leftover banner, no leftover shell history) instead of
+      // sitting at the bottom of whatever the shell drew last.
+      //   \x1b[2J  — erase entire screen
+      //   \x1b[3J  — erase saved scrollback
+      //   \x1b[H   — move cursor to home (0,0)
+      process.stdout.write("\x1b[2J\x1b[3J\x1b[H");
+    }
     if (opts.onChildExit) {
       opts.onChildExit(e.exitCode ?? null, exitMsg.signal);
     } else {
