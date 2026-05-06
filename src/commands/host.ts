@@ -41,14 +41,16 @@ export async function runHost(opts: HostOptions): Promise<void> {
   };
 
   if (!opts.noListen) {
+    let expiresInSec: number | undefined;
     try {
       const result = await acceptStart(opts);
       printBanner(result);
+      expiresInSec = result.expiresInSec;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       process.stderr.write(chalk.yellow(`telepathy host: peer listener failed (${msg}). Continuing without LAN exposure.\n`));
     }
-    await holdForFirstPeerOrKeypress();
+    await holdForFirstPeerOrKeypress({ expiresInSec });
   }
 
   const wrapper = await startWrapper({
@@ -97,10 +99,10 @@ export function classifyHoldInput(chunk: Buffer): KeyClass {
   return "key";
 }
 
-function holdForFirstPeerOrKeypress(): Promise<"peer" | "key"> {
+function holdForFirstPeerOrKeypress(opts: { expiresInSec?: number } = {}): Promise<"peer" | "key" | "expired"> {
   return new Promise((resolve) => {
     let done = false;
-    const settle = (reason: "peer" | "key", message: string): void => {
+    const settle = (reason: "peer" | "key" | "expired", message: string): void => {
       if (done) {
         return;
       }
@@ -108,6 +110,15 @@ function holdForFirstPeerOrKeypress(): Promise<"peer" | "key"> {
       cleanup();
       process.stderr.write(`${message}\n`);
       resolve(reason);
+    };
+    const abort = (message: string, code: number): void => {
+      if (done) {
+        return;
+      }
+      done = true;
+      cleanup();
+      process.stderr.write(`${message}\n`);
+      process.exit(code);
     };
 
     const unsubscribePeer = onFirstPeerConnect((peer) => {
@@ -117,15 +128,34 @@ function holdForFirstPeerOrKeypress(): Promise<"peer" | "key"> {
     const onKey = (chunk: Buffer): void => {
       const cls = classifyHoldInput(chunk);
       if (cls === "abort") {
-        cleanup();
-        process.stderr.write(chalk.dim("\n(aborted)\n"));
-        process.exit(130);
+        abort(chalk.dim("\n(aborted)"), 130);
+        return;
       }
       if (cls === "ignore") {
         return;
       }
       settle("key", chalk.dim("✔ keypress detected. Spawning shell..."));
     };
+
+    // SIGINT belt-and-suspenders. Raw-mode stdin SHOULD deliver Ctrl-C as
+    // the 0x03 byte through onKey, but on some terminal/Node combos
+    // (non-TTY stdin, setRawMode silently failing, etc.) Ctrl-C arrives
+    // as a SIGINT signal instead. Either path now exits cleanly.
+    const onSigint = (): void => {
+      abort(chalk.dim("\n(aborted)"), 130);
+    };
+    process.once("SIGINT", onSigint);
+
+    // Token expiry: if the listener's join token TTL elapses while we're
+    // still holding, abort cleanly rather than spawn the shell into a
+    // session no peer can ever reach.
+    let expiryTimer: NodeJS.Timeout | undefined;
+    if (opts.expiresInSec && opts.expiresInSec > 0) {
+      expiryTimer = setTimeout(() => {
+        settle("expired", chalk.yellow(`⏰ token expired (${Math.round(opts.expiresInSec! / 60)} min). Aborting host.`));
+        process.exit(0);
+      }, opts.expiresInSec * 1000);
+    }
 
     const wasRaw = process.stdin.isTTY ? process.stdin.isRaw : false;
     if (process.stdin.isTTY) {
@@ -135,10 +165,15 @@ function holdForFirstPeerOrKeypress(): Promise<"peer" | "key"> {
     process.stdin.on("data", onKey);
 
     process.stderr.write(chalk.dim(`   waiting for a peer to connect, or press any key to start the shell now...\n`));
+    process.stderr.write(chalk.dim(`   (Ctrl-C to abort)\n`));
 
     function cleanup(): void {
       unsubscribePeer();
       process.stdin.off("data", onKey);
+      process.off("SIGINT", onSigint);
+      if (expiryTimer) {
+        clearTimeout(expiryTimer);
+      }
       if (process.stdin.isTTY) {
         process.stdin.setRawMode(wasRaw);
       }
