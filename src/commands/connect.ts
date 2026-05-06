@@ -1,9 +1,10 @@
-// `telepathy connect <token>` — establish a peer link, then either open
-// the browser viewer (default) or mirror the remote PTY in the current
-// terminal (--term mode).
+// `telepathy connect <token>` — establish a peer link. Default opens the
+// browser viewer for the remote PTY; `--term` mirrors the remote PTY
+// directly in the current terminal (delegated to ./term.ts).
 
 import { connectPeer } from "../core/api.js";
 import { startViewer, getViewerUrl } from "../core/viewer.js";
+import { runTermMode } from "./term.js";
 import { spawn } from "node:child_process";
 import chalk from "chalk";
 
@@ -14,6 +15,10 @@ export type ConnectCommandOptions = {
 };
 
 export async function runConnect(opts: ConnectCommandOptions): Promise<void> {
+  if (opts.term) {
+    await runTermMode({ token: opts.token, alias: opts.alias });
+    return;
+  }
   let result;
   try {
     result = await connectPeer({ token: opts.token, alias: opts.alias });
@@ -23,11 +28,8 @@ export async function runConnect(opts: ConnectCommandOptions): Promise<void> {
     process.exit(1);
   }
   process.stderr.write(
-    `${chalk.cyan("🔗 linked")} alias=${chalk.bold(result.alias)} (remote=${result.remoteAlias} at ${result.remoteAddr}, hasPty=${result.hasPty})\n`,
+    `${chalk.cyan("🔗 linked")} alias=${chalk.bold(result.alias)} (remote=${result.remoteAlias} at ${result.remoteAddr})\n`,
   );
-  if (opts.term) {
-    process.stderr.write(chalk.dim("--term mode is not implemented yet; opening browser viewer instead.\n"));
-  }
   await startViewer();
   const url = getViewerUrl(`/peer/${encodeURIComponent(result.alias)}`);
   if (!url) {
@@ -35,9 +37,15 @@ export async function runConnect(opts: ConnectCommandOptions): Promise<void> {
     process.exit(1);
   }
   process.stderr.write(`${chalk.green("🖥  viewer:")} ${url}\n`);
+  process.stderr.write(chalk.dim("   Press Ctrl-C to disconnect.\n"));
   openInBrowser(url);
-  // Stay alive so the peer link doesn't drop. Ctrl-C exits.
-  await new Promise(() => undefined);
+  await new Promise<never>((_, reject) => {
+    process.once("SIGINT", () => {
+      process.stderr.write(chalk.dim("\n(disconnected)\n"));
+      process.exit(0);
+    });
+    process.once("uncaughtException", reject);
+  });
 }
 
 function openInBrowser(url: string): void {

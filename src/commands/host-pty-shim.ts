@@ -29,11 +29,20 @@ export async function attachToWrapperIfPresent(pipePath?: string): Promise<Local
     subscribers: new Set(),
     resizeSubscribers: new Set(),
   };
+  // Wait for the wrapper's `hello` so cols/rows/ringBuffer are populated
+  // before we return — otherwise pending peer subscribes drain against an
+  // empty replay buffer and the browser viewer paints nothing until the
+  // next live frame.
+  let helloResolve: (() => void) | undefined;
+  const helloReceived = new Promise<void>((r) => {
+    helloResolve = r; 
+  });
   readIpc<WrapperToExtension>(socket, (msg) => {
     if (msg.type === "hello") {
       state.cols = msg.cols;
       state.rows = msg.rows;
       state.ringBuffer = Buffer.from(msg.replayBase64, "base64");
+      helloResolve?.();
     } else if (msg.type === "frame") {
       const chunk = Buffer.from(msg.dataBase64, "base64");
       state.ringBuffer = appendBounded(state.ringBuffer, chunk, RING_BUFFER_BYTES);
@@ -58,6 +67,11 @@ export async function attachToWrapperIfPresent(pipePath?: string): Promise<Local
   }, () => {
     socket.destroy();
   });
+  // Bounded wait — if hello somehow never arrives, return anyway after 2s.
+  await Promise.race([
+    helloReceived,
+    new Promise<void>((r) => setTimeout(r, 2000)),
+  ]);
   return {
     state,
     injectInput: (dataBase64) => {

@@ -57,6 +57,16 @@
   const tiles = new Map();   // alias -> { tile, term, ws, fit, hasPty }
   let activeAlias = null;
 
+  // Decode base64 to raw bytes so xterm sees the original UTF-8 sequence
+  // (term.write(string) treats input as already-decoded, which mangles
+  // multi-byte glyphs like powerline chevrons).
+  function b64ToBytes(b64) {
+    const bin = atob(b64);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
   async function fetchPeers() {
     const r = await fetch("/api/peers?t=" + encodeURIComponent(TOKEN));
     if (!r.ok) throw new Error("HTTP " + r.status);
@@ -104,7 +114,7 @@
     ws.onmessage = (ev) => {
       const msg = JSON.parse(ev.data);
       if (msg.type === "frame") {
-        term.write(atob(msg.data));
+        term.write(b64ToBytes(msg.data));
       } else if (msg.type === "resize") {
         try { term.resize(msg.cols, msg.rows); } catch (_) {}
       } else if (msg.type === "error") {

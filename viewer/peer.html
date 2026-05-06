@@ -40,10 +40,20 @@
   const ws = new WebSocket(`${location.origin.replace("http", "ws")}/ws/${encodeURIComponent(alias)}?t=${encodeURIComponent(TOKEN)}`);
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
-    if (msg.type === "frame") term.write(atob(msg.data));
-    else if (msg.type === "resize") { try { term.resize(msg.cols, msg.rows); } catch (_) {} }
-    else if (msg.type === "error") term.write(`\\r\\n\\x1b[31m[telepathy] ${msg.message}\\x1b[0m\\r\\n`);
+    if (msg.type === "frame") {
+      term.write(b64ToBytes(msg.data));
+    } else if (msg.type === "resize") {
+      try { term.resize(msg.cols, msg.rows); } catch (_) {}
+    } else if (msg.type === "error") {
+      term.write(`\\r\\n\\x1b[31m[telepathy] ${msg.message}\\x1b[0m\\r\\n`);
+    }
   };
+  function b64ToBytes(b64) {
+    const bin = atob(b64);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
   term.onData((data) => {
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "input", data }));

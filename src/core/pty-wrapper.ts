@@ -50,13 +50,21 @@ export type WrapperState = {
   subscribers: Set<Socket>;
 };
 
-export async function startWrapper(opts: {
+export type StartWrapperOptions = {
   pipePath: string;
   command: string;
   args: string[];
   cwd: string;
   env: Record<string, string | undefined>;
-}): Promise<WrapperState | null> {
+  // Called when the wrapped child exits. Defaults to `process.exit(code)`,
+  // which is what the production CLI wants. Tests pass a custom handler.
+  onChildExit?: (code: number | null, signal: NodeJS.Signals | null) => void;
+  // Whether to attach the wrapper to the host process's stdin/stdout for
+  // user passthrough. Default true (production CLI). Tests pass false.
+  attachStdio?: boolean;
+};
+
+export async function startWrapper(opts: StartWrapperOptions): Promise<WrapperState | null> {
   const ptyMod = await tryLoadPty();
   if (!ptyMod) {
     return null;
@@ -85,13 +93,17 @@ export async function startWrapper(opts: {
     }
   };
 
+  const attachStdio = opts.attachStdio !== false;
+
   pty.onData((data) => {
     // node-pty emits already-decoded UTF-8 strings. Re-encode to UTF-8
     // bytes so the user's terminal sees the original byte stream
     // (powerline glyphs, box-drawing, etc. are multi-byte UTF-8 and get
     // mangled if we round-trip through "binary"/Latin-1).
     const chunk = Buffer.from(data, "utf8");
-    process.stdout.write(chunk);
+    if (attachStdio) {
+      process.stdout.write(chunk);
+    }
     ringBuffer = appendBounded(ringBuffer, chunk, RING_BUFFER_BYTES);
     broadcastFrame(chunk);
   });
@@ -109,38 +121,45 @@ export async function startWrapper(opts: {
         // ignore
       }
     }
-    process.exit(e.exitCode ?? 0);
-  });
-
-  // Forward user keystrokes from wrapper's stdin → PTY.
-  if (process.stdin.isTTY) {
-    process.stdin.setRawMode(true);
-  }
-  process.stdin.on("data", (chunk: Buffer) => {
-    // node-pty.write expects a UTF-8 string; pass our raw stdin bytes
-    // through that decoding so non-ASCII keystrokes (typed multi-byte
-    // input, paste containing emoji/etc.) reach the PTY intact.
-    pty.write(chunk.toString("utf8"));
-  });
-
-  // Resize: when the wrapper's TTY changes, mirror to the PTY and notify subs.
-  process.stdout.on("resize", () => {
-    const newCols = process.stdout.columns ?? cols;
-    const newRows = process.stdout.rows ?? rows;
-    try {
-      pty.resize(newCols, newRows);
-    } catch {
-      // Some terminals don't support resize; ignore.
+    if (opts.onChildExit) {
+      opts.onChildExit(e.exitCode ?? null, exitMsg.signal);
+    } else {
+      process.exit(e.exitCode ?? 0);
     }
-    const resizeMsg: WrapperToExtension = { type: "resize", cols: newCols, rows: newRows };
-    for (const sub of subscribers) {
+  });
+
+  // Forward user keystrokes from wrapper's stdin → PTY (production only;
+  // tests pass attachStdio:false to avoid keeping the test event loop alive
+  // and to avoid corrupting the test runner's TTY).
+  let stdinHandler: ((chunk: Buffer) => void) | undefined;
+  let resizeHandler: (() => void) | undefined;
+  if (attachStdio) {
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(true);
+    }
+    stdinHandler = (chunk: Buffer): void => {
+      pty.write(chunk.toString("utf8"));
+    };
+    process.stdin.on("data", stdinHandler);
+    resizeHandler = (): void => {
+      const newCols = process.stdout.columns ?? cols;
+      const newRows = process.stdout.rows ?? rows;
       try {
-        sendIpc(sub, resizeMsg);
+        pty.resize(newCols, newRows);
       } catch {
-        // ignore
+        // Some terminals don't support resize; ignore.
       }
-    }
-  });
+      const resizeMsg: WrapperToExtension = { type: "resize", cols: newCols, rows: newRows };
+      for (const sub of subscribers) {
+        try {
+          sendIpc(sub, resizeMsg);
+        } catch {
+          // ignore
+        }
+      }
+    };
+    process.stdout.on("resize", resizeHandler);
+  }
 
   const server = startIpcServer({
     pipePath: opts.pipePath,

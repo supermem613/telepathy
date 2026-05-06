@@ -28,7 +28,7 @@ describe("api.acceptStart / connectPeer round-trip", () => {
 
   it("abrupt TLS RST does not crash the host (regression: unhandled readline error)", async () => {
     const port = randomPort();
-    const accept = await acceptStart({ port });
+    await acceptStart({ port });
     try {
       // Open a raw TLS connection that abandons the handshake mid-flight.
       // The server-side socket will read ECONNRESET; the host must NOT crash.
