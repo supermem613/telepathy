@@ -34,7 +34,7 @@
     "@xterm/xterm": "^5.5.0",
     "chalk": "^5.4.1",
     "commander": "^13.1.0",
-    "electron": "^33.2.0",
+    "electron": "^42.0.0",
     "node-pty": "^1.0.0",
     "selfsigned": "^2.4.1",
     "ws": "^8.18.0",
