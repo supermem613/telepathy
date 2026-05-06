@@ -13,23 +13,22 @@ if (!urlArg) {
   process.exit(2);
 }
 const url = urlArg.slice("--url=".length);
+console.error(`[telepathy-electron] starting pid=${process.pid}`);
 
 // Stable app name → predictable userData dir (%APPDATA%/telepathy on
 // Windows). Without this, Electron falls back to "Electron" which mixes
 // our cache with every other Electron app on the system.
 app.setName("telepathy");
 
-// Single-instance lock: if another telepathy window is already open,
-// focus it instead of stacking up another (off-screen) Electron process.
-const gotLock = app.requestSingleInstanceLock({ url });
-if (!gotLock) {
-  app.quit();
-  process.exit(0);
-}
+// Note: requestSingleInstanceLock() was removed because stale lock state
+// from previous crashed instances was silently quitting new launches with
+// no visible error. Re-running `telepathy app` now always creates a new
+// window. Two windows is annoying; zero windows is broken.
 
 let mainWindow = null;
 
 function createWindow() {
+  console.error("[telepathy-electron] createWindow");
   // center:true is mandatory on multi-monitor setups — without it
   // Electron can place the window at out-of-range coordinates if any
   // attached monitor uses negative coords (e.g. one to the left/above
@@ -51,14 +50,27 @@ function createWindow() {
   mainWindow.setMenuBarVisibility(false);
 
   mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
-    console.error(`[telepathy] failed to load ${validatedURL}: ${errorDescription} (code ${errorCode})`);
+    console.error(`[telepathy-electron] failed to load ${validatedURL}: ${errorDescription} (code ${errorCode})`);
   });
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
-    console.error(`[telepathy] renderer crashed: ${details.reason} (exitCode ${details.exitCode})`);
+    console.error(`[telepathy-electron] renderer crashed: ${details.reason} (exitCode ${details.exitCode})`);
+  });
+  mainWindow.once("show", () => {
+    console.error("[telepathy-electron] window shown");
   });
   mainWindow.webContents.on("did-finish-load", () => {
+    console.error("[telepathy-electron] page loaded; bringing to front");
     if (!mainWindow) {
       return;
+    }
+    // Aggressive foreground sequence: show, restore from minimized,
+    // moveTop (Windows-specific bring-to-z-top), focus, brief alwaysOnTop.
+    mainWindow.show();
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+    if (typeof mainWindow.moveTop === "function") {
+      mainWindow.moveTop();
     }
     mainWindow.focus();
     if (process.platform === "win32") {
@@ -67,7 +79,7 @@ function createWindow() {
         if (mainWindow) {
           mainWindow.setAlwaysOnTop(false);
         }
-      }, 200);
+      }, 300);
     }
   });
 
@@ -108,32 +120,20 @@ function buildMenu() {
   ]));
 }
 
-app.on("second-instance", (_event, _argv, _cwd, additionalData) => {
-  // Another `telepathy app` invocation. Surface the existing window;
-  // re-point it at the new URL if a different token was minted.
+app.on("second-instance", () => {
+  // Multiple instances are now allowed (singleton-lock removed). If
+  // somehow this fires (it shouldn't without the lock), surface the
+  // existing window for good UX.
   if (mainWindow) {
     if (mainWindow.isMinimized()) {
       mainWindow.restore();
     }
     mainWindow.focus();
-    if (process.platform === "win32") {
-      mainWindow.setAlwaysOnTop(true);
-      setTimeout(() => {
-        if (mainWindow) {
-          mainWindow.setAlwaysOnTop(false);
-        }
-      }, 200);
-    }
-    if (additionalData && typeof additionalData.url === "string") {
-      const current = mainWindow.webContents.getURL();
-      if (additionalData.url !== current) {
-        mainWindow.loadURL(additionalData.url);
-      }
-    }
   }
 });
 
 app.whenReady().then(() => {
+  console.error("[telepathy-electron] whenReady");
   buildMenu();
   createWindow();
   app.on("activate", () => {
