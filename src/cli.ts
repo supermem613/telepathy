@@ -42,20 +42,6 @@ program
   });
 
 program
-  .command("shell")
-  .description("Alias for `telepathy host` (wraps your default shell)")
-  .option("-p, --port <port>", "TCP port to listen on", (v) => parseInt(v, 10))
-  .option("-b, --bind <host>", "Interface to bind to (default: detected LAN IPv4)")
-  .option("-a, --advertise <host>", "IP encoded into the join token (default: detected LAN IPv4)")
-  .action(async (options) => {
-    await runHost({
-      port: options.port,
-      bind: options.bind,
-      advertise: options.advertise,
-    });
-  });
-
-program
   .command("connect <token>")
   .description("Link to a host using its join token (default: opens browser viewer)")
   .option("--as <alias>", "Custom local alias for this peer")
