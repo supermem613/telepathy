@@ -47,6 +47,7 @@ Box A's shell spawns the moment a peer connects. From the wall: type into the ac
 | `telepathy disconnect [peer]` | Tear down one peer link by alias, or all peers when no arg is given |
 | `telepathy doctor` | Preflight: node version, node-pty availability, default port reachability, browser launcher |
 | `telepathy install-shortcut` | Windows-only: create a Start-menu shortcut for `telepathy app` you can pin to taskbar (`--uninstall` to remove) |
+| `telepathy update` | Pull the latest commits, `npm install`, and rebuild the local telepathy clone in place |
 
 Bare `telepathy` prints version + the full help. `telepathy <command> --help` for per-command flags. `telepathy --debug <command>` enables verbose stderr traces from the orchestrator and PTY wrapper.
 

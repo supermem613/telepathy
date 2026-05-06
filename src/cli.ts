@@ -11,6 +11,7 @@ import { runApp } from "./commands/app.js";
 import { runPeers, runDisconnect } from "./commands/peers.js";
 import { runDoctor } from "./commands/doctor.js";
 import { runInstallShortcut } from "./commands/install-shortcut.js";
+import { runUpdate } from "./commands/update.js";
 import { setDebug } from "./core/debug.js";
 
 const pkgPath = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
@@ -104,7 +105,14 @@ program
     await runInstallShortcut({ uninstall: options.uninstall });
   });
 
-// Bare `telepathy` (no args) prints version + full help. Matches the
+program
+  .command("update")
+  .description("Pull, npm install, and rebuild the local telepathy clone in place")
+  .action(async () => {
+    await runUpdate();
+  });
+
+// Bare `telepathy`(no args) prints version + full help. Matches the
 // rotunda/kash/reflux convention. Doesn't print before sub-commands so
 // machine-parseable output stays clean.
 if (process.argv.slice(2).length === 0) {
