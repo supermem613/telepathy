@@ -28,7 +28,6 @@ export type HostOptions = AcceptOptions & {
   command?: string;
   args?: string[];
   noListen?: boolean;       // skip listener; just wrap the process locally
-  noHold?: boolean;         // spawn shell immediately; don't wait for peer/keypress
 };
 
 export async function runHost(opts: HostOptions): Promise<void> {
@@ -49,10 +48,7 @@ export async function runHost(opts: HostOptions): Promise<void> {
       const msg = err instanceof Error ? err.message : String(err);
       process.stderr.write(chalk.yellow(`telepathy host: peer listener failed (${msg}). Continuing without LAN exposure.\n`));
     }
-
-    if (!opts.noHold) {
-      await holdForFirstPeerOrKeypress();
-    }
+    await holdForFirstPeerOrKeypress();
   }
 
   const wrapper = await startWrapper({
