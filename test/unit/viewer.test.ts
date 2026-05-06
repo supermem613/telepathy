@@ -84,6 +84,35 @@ describe("viewer HTTP server", () => {
     }
   });
 
+  it("substitutes {{TOKEN}} in /wall HTML so static <script src=...?t=...> tags pass auth (regression)", async () => {
+    const v = await startViewer();
+    try {
+      const tk = getViewerToken()!;
+      const r = await get(`/wall?t=${tk}`, v.port);
+      assert.equal(r.status, 200);
+      // The script tags must contain the actual token, not the literal placeholder.
+      assert.equal(r.body.includes("{{TOKEN}}"), false, "wall.html still contains literal {{TOKEN}} placeholder");
+      assert.match(r.body, new RegExp(`/static/xterm\\.js\\?t=${tk}`));
+      assert.match(r.body, new RegExp(`/static/xterm\\.css\\?t=${tk}`));
+      assert.match(r.body, new RegExp(`/static/addon-fit\\.js\\?t=${tk}`));
+    } finally {
+      stopViewer();
+    }
+  });
+
+  it("substitutes {{TOKEN}} in /peer HTML too", async () => {
+    const v = await startViewer();
+    try {
+      const tk = getViewerToken()!;
+      const r = await get(`/peer/box-a?t=${tk}`, v.port);
+      assert.equal(r.status, 200);
+      assert.equal(r.body.includes("{{TOKEN}}"), false);
+      assert.match(r.body, new RegExp(`/static/xterm\\.js\\?t=${tk}`));
+    } finally {
+      stopViewer();
+    }
+  });
+
   it("serves /peer/<alias> HTML with a valid token", async () => {
     const v = await startViewer();
     try {

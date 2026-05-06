@@ -62,11 +62,11 @@ export async function startViewer(opts: { port?: number } = {}): Promise<ViewerS
       return;
     }
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/wall")) {
-      serveFile(res, join(staticRoot, "wall.html"), "text/html");
+      serveHtml(res, join(staticRoot, "wall.html"), token);
       return;
     }
     if (req.method === "GET" && url.pathname.startsWith("/peer/")) {
-      serveFile(res, join(staticRoot, "peer.html"), "text/html");
+      serveHtml(res, join(staticRoot, "peer.html"), token);
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/peers") {
@@ -279,6 +279,22 @@ function serveFile(res: import("node:http").ServerResponse, path: string, mime: 
     const data = readFileSync(path);
     res.writeHead(200, { "Content-Type": mime, "Cache-Control": "no-store" });
     res.end(data);
+  } catch {
+    res.writeHead(404, { "Content-Type": "text/plain" });
+    res.end("not found");
+  }
+}
+
+// Same as serveFile but substitutes {{TOKEN}} so static <script src=...?t=…>
+// tags in the HTML go through the auth gate. Without this, the browser
+// fetches `xterm.js?t={{TOKEN}}` literally and gets a 401, breaking the
+// entire viewer.
+function serveHtml(res: import("node:http").ServerResponse, path: string, token: string): void {
+  try {
+    const raw = readFileSync(path, "utf8");
+    const substituted = raw.replace(/\{\{TOKEN\}\}/g, token);
+    res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" });
+    res.end(substituted);
   } catch {
     res.writeHead(404, { "Content-Type": "text/plain" });
     res.end("not found");

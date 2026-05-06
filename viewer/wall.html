@@ -258,64 +258,84 @@
   // ---- tabs -------------------------------------------------------------
 
   function createTab(peer) {
-    const tab = document.createElement("div");
-    tab.className = "tab";
-    tab.dataset.alias = peer.alias;
-    const dot = document.createElement("span"); dot.className = "dot";
-    const label = document.createElement("span"); label.className = "label";
-    label.textContent = peer.alias + (peer.remoteAlias && peer.remoteAlias !== peer.alias ? " (" + peer.remoteAlias + ")" : "");
-    label.title = peer.remoteAddr;
-    const close = document.createElement("span"); close.className = "close"; close.textContent = "✕";
-    close.title = "Close tab (disconnect)";
-    close.addEventListener("click", (e) => { e.stopPropagation(); closeTab(peer.alias); });
-    tab.append(dot, label, close);
-    tab.addEventListener("click", () => activate(peer.alias));
-    tabsEl.appendChild(tab);
+    // Set tabs.set FIRST then build everything, so partial failures
+    // (e.g. xterm not loaded) don't leave orphan DOM behind that the
+    // refresh loop would then try to recreate forever.
+    let tab, dot, label, termHost, term, fit, ws, entry;
+    try {
+      tab = document.createElement("div");
+      tab.className = "tab";
+      tab.dataset.alias = peer.alias;
+      dot = document.createElement("span"); dot.className = "dot";
+      label = document.createElement("span"); label.className = "label";
+      label.textContent = peer.alias + (peer.remoteAlias && peer.remoteAlias !== peer.alias ? " (" + peer.remoteAlias + ")" : "");
+      label.title = peer.remoteAddr;
+      const close = document.createElement("span"); close.className = "close"; close.textContent = "✕";
+      close.title = "Close tab (disconnect)";
+      close.addEventListener("click", (e) => { e.stopPropagation(); closeTab(peer.alias); });
+      tab.append(dot, label, close);
+      tab.addEventListener("click", () => activate(peer.alias));
+      tabsEl.appendChild(tab);
 
-    const termHost = document.createElement("div");
-    termHost.className = "term-host";
-    contentEl.appendChild(termHost);
+      termHost = document.createElement("div");
+      termHost.className = "term-host";
+      contentEl.appendChild(termHost);
 
-    const term = new window.Terminal({
-      fontSize: 13, cursorBlink: true,
-      disableStdin: !peer.hasPty,
-      theme: { background: "#0a0d12", foreground: "#cbd5e1" },
-    });
-    const fit = new window.FitAddon.FitAddon();
-    term.loadAddon(fit);
-    term.open(termHost);
-    setTimeout(() => { try { fit.fit(); } catch (_) {} }, 0);
-
-    const ws = new WebSocket(`${location.origin.replace("http", "ws")}/ws/${encodeURIComponent(peer.alias)}?t=${encodeURIComponent(TOKEN)}`);
-    const entry = {
-      tab, dot, label, termHost, term, fit, ws,
-      lastFrameAt: 0, busyTimer: null, hasPty: peer.hasPty, alias: peer.alias,
-    };
-    ws.onopen = () => { tab.classList.add("live"); };
-    ws.onmessage = (ev) => {
-      const msg = JSON.parse(ev.data);
-      if (msg.type === "frame") {
-        term.write(b64ToBytes(msg.data));
-        markBusy(entry);
-      } else if (msg.type === "resize") {
-        try { term.resize(msg.cols, msg.rows); } catch (_) {}
-      } else if (msg.type === "error") {
-        term.write(`\\r\\n\\x1b[31m[telepathy] ${msg.message}\\x1b[0m\\r\\n`);
-        tab.classList.remove("live"); tab.classList.add("offline");
+      if (typeof window.Terminal !== "function") {
+        throw new Error("xterm.js failed to load (window.Terminal is undefined)");
       }
-    };
-    ws.onclose = () => {
-      tab.classList.remove("live", "busy"); tab.classList.add("offline");
-    };
-    if (peer.hasPty) {
-      term.onData((data) => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "input", data }));
-        }
+      term = new window.Terminal({
+        fontSize: 13, cursorBlink: true,
+        disableStdin: !peer.hasPty,
+        theme: { background: "#0a0d12", foreground: "#cbd5e1" },
       });
+      fit = new window.FitAddon.FitAddon();
+      term.loadAddon(fit);
+      term.open(termHost);
+      setTimeout(() => { try { fit.fit(); } catch (_) {} }, 0);
+
+      ws = new WebSocket(`${location.origin.replace("http", "ws")}/ws/${encodeURIComponent(peer.alias)}?t=${encodeURIComponent(TOKEN)}`);
+      entry = {
+        tab, dot, label, termHost, term, fit, ws,
+        lastFrameAt: 0, busyTimer: null, hasPty: peer.hasPty, alias: peer.alias,
+      };
+      ws.onopen = () => { tab.classList.add("live"); };
+      ws.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === "frame") {
+          term.write(b64ToBytes(msg.data));
+          markBusy(entry);
+        } else if (msg.type === "resize") {
+          try { term.resize(msg.cols, msg.rows); } catch (_) {}
+        } else if (msg.type === "error") {
+          term.write("\r\n\x1b[31m[telepathy] " + msg.message + "\x1b[0m\r\n");
+          tab.classList.remove("live"); tab.classList.add("offline");
+        }
+      };
+      ws.onclose = () => {
+        tab.classList.remove("live", "busy"); tab.classList.add("offline");
+      };
+      if (peer.hasPty) {
+        term.onData((data) => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "input", data }));
+          }
+        });
+      }
+      tabs.set(peer.alias, entry);
+      return entry;
+    } catch (err) {
+      // Cleanup any partially-built DOM so refresh doesn't re-create endlessly.
+      try { tab && tab.remove(); } catch (_) {}
+      try { termHost && termHost.remove(); } catch (_) {}
+      try { ws && ws.close(); } catch (_) {}
+      try { term && term.dispose(); } catch (_) {}
+      showToast("createTab failed: " + (err.message || err), true);
+      console.error("[telepathy/wall] createTab failed:", err);
+      // Mark this alias as failed so we don't retry every refresh.
+      tabs.set(peer.alias, { tab: null, ws: null, term: null, fit: null, alias: peer.alias, failed: true });
+      return null;
     }
-    tabs.set(peer.alias, entry);
-    return entry;
   }
 
   function markBusy(entry) {
