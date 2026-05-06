@@ -6,7 +6,7 @@ import { connectPeer } from "../core/api.js";
 import { startViewer, getViewerUrl } from "../core/viewer.js";
 import { addOrchestratorEvents } from "../core/orchestrator.js";
 import { runTermMode } from "./term.js";
-import { findElectron } from "./app.js";
+import { findElectron } from "./find-electron.js";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";

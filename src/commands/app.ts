@@ -1,17 +1,14 @@
 // `telepathy app [tokens...]` — open the Electron wall viewer.
 //
-// Electron is required. If the local install is missing, fail loudly with
-// the exact command to fix it. We don't fall back to the system browser:
-// the windowed app experience IS the product, and a bare-tab fallback
-// gives a wildly different UX (no menu bar, no app icon, no app-mode
-// chromeless window).
+// The Electron process now owns the wall HTTP+WS server, so this
+// command is fire-and-forget: spawn Electron detached, return to the
+// prompt immediately. Closing the Electron window stops the server.
 
-import { connectPeer } from "../core/api.js";
-import { startViewer, getViewerUrl } from "../core/viewer.js";
+import { findElectron } from "./find-electron.js";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import chalk from "chalk";
 
 export type AppOptions = {
@@ -24,75 +21,22 @@ export async function runApp(opts: AppOptions): Promise<void> {
     process.stderr.write(chalk.red("telepathy app: Electron isn't installed. Run `npm install` in the repo root.\n"));
     process.exit(2);
   }
-
-  for (const token of opts.tokens) {
-    try {
-      const r = await connectPeer({ token });
-      process.stderr.write(`${chalk.cyan("🔗")} linked ${chalk.bold(r.alias)} (${r.remoteAddr})\n`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(chalk.yellow(`skip token (${msg})\n`));
-    }
-  }
-
-  await startViewer();
-  const url = getViewerUrl("/wall");
-  if (!url) {
-    process.stderr.write(chalk.red("viewer failed to start.\n"));
-    process.exit(1);
-  }
-  process.stderr.write(`${chalk.green("🛰  wall:")} ${url}\n`);
   const main = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "electron", "main.cjs");
-  const child = spawn(electron.bin, [main, `--url=${url}`], {
+  if (!existsSync(main)) {
+    process.stderr.write(chalk.red(`telepathy app: missing electron/main.cjs at ${main}\n`));
+    process.exit(2);
+  }
+  const tokenArgs = opts.tokens.map((t) => `--token=${t}`);
+  // Detached + stdio:"ignore" + windowsHide:true means: spawn the
+  // Electron process as fully independent from this CLI. The CLI exits
+  // immediately; the window's lifecycle is owned by Electron.
+  const child = spawn(electron.bin, [main, ...tokenArgs], {
     cwd: electron.cwd,
-    stdio: ["ignore", "ignore", "pipe"],
+    detached: true,
+    stdio: "ignore",
     windowsHide: true,
   });
-  child.stderr?.on("data", (chunk: Buffer) => {
-    const text = chunk.toString("utf8");
-    const meaningful = text.split(/\r?\n/).filter((l) => {
-      if (!l.trim()) {
-        return false;
-      }
-      if (/cache_util_win|disk_cache|gpu_disk_cache|gpu\\ipc|registration_protocol_win/.test(l)) {
-        return false;
-      }
-      return true;
-    });
-    if (meaningful.length > 0) {
-      process.stderr.write(chalk.dim("[electron] ") + meaningful.join("\n") + "\n");
-    }
-  });
-  child.on("error", (err) => {
-    process.stderr.write(chalk.red(`[electron] failed to launch: ${err.message}\n`));
-  });
-  process.stderr.write(chalk.dim("   window: Electron\n"));
-  process.stderr.write(chalk.dim("   Press Ctrl-C to stop the wall server.\n"));
-  await new Promise<never>((_, reject) => {
-    process.once("SIGINT", () => process.exit(0));
-    process.once("uncaughtException", reject);
-  });
-}
-
-export function findElectron(): { bin: string; cwd: string } | null {
-  // dist/commands/app.js → ../../  (repo root, where node_modules lives)
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-  // Skip the .bin/electron.cmd shim entirely — spawning .cmd on Windows
-  // requires shell:true (CVE-2024-27980 mitigation), which on top of
-  // detached:true creates a visible cmd.exe console window. Use the
-  // platform-native binary directly: it spawns clean, no console, no shell.
-  const distExe = process.platform === "win32"
-    ? join(root, "node_modules", "electron", "dist", "electron.exe")
-    : join(root, "node_modules", "electron", "dist", "electron");
-  if (existsSync(distExe)) {
-    return { bin: distExe, cwd: root };
-  }
-  // Fallback to the .bin shim if the dist binary is missing for some reason.
-  const shim = process.platform === "win32"
-    ? join(root, "node_modules", ".bin", "electron.cmd")
-    : join(root, "node_modules", ".bin", "electron");
-  if (existsSync(shim)) {
-    return { bin: shim, cwd: root };
-  }
-  return null;
+  child.unref();
+  process.stderr.write(`${chalk.green("✓")} Electron window opening (close it to stop the server).\n`);
+  // Done. CLI returns to prompt.
 }

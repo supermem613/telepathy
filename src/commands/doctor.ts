@@ -4,7 +4,7 @@
 import chalk from "chalk";
 import { createServer } from "node:net";
 import { DEFAULT_PORT } from "../core/protocol.js";
-import { findElectron } from "./app.js";
+import { findElectron } from "./find-electron.js";
 
 export type CheckResult = {
   name: string;

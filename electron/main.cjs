@@ -1,39 +1,82 @@
-// Electron shell for the telepathy wall viewer.
+// Electron shell + wall server for telepathy.
 //
-// Loads the URL passed on the command line as --url=<url>. The viewer
-// itself runs in the parent telepathy process; this window is just a
-// chromeless frame around the existing wall.html.
+// This process owns BOTH the BrowserWindow and the local HTTP+WS wall
+// server, so the launching CLI (`telepathy app`) can exit immediately
+// — the window's lifecycle is now self-contained. Closing the window
+// closes the server too.
+//
+// Args (forwarded by `telepathy app`):
+//   --token=TLP1.…    (zero or more) — pre-link these peers on launch
+//
+// SAFETY: stdout/stderr go nowhere when the launcher uses
+// detached:true + stdio:"ignore". Crash-time diagnostics get appended
+// to %APPDATA%/telepathy/launch.log so the next launch can surface
+// them. Don't write secrets there — we only log lifecycle events and
+// error strings.
 
 const { app, BrowserWindow, Menu, shell } = require("electron");
+const path = require("path");
+const fs = require("fs");
+const { pathToFileURL } = require("url");
 
 const argv = process.argv.slice(2);
-const urlArg = argv.find((a) => a.startsWith("--url="));
-if (!urlArg) {
-  console.error("telepathy-electron: missing --url=<viewer-url>");
-  process.exit(2);
-}
-const url = urlArg.slice("--url=".length);
-console.error(`[telepathy-electron] starting pid=${process.pid}`);
+const tokens = argv
+  .filter((a) => a.startsWith("--token="))
+  .map((a) => a.slice("--token=".length))
+  .filter(Boolean);
 
 // Stable app name → predictable userData dir (%APPDATA%/telepathy on
 // Windows). Without this, Electron falls back to "Electron" which mixes
 // our cache with every other Electron app on the system.
 app.setName("telepathy");
 
-// Note: requestSingleInstanceLock() was removed because stale lock state
-// from previous crashed instances was silently quitting new launches with
-// no visible error. Re-running `telepathy app` now always creates a new
-// window. Two windows is annoying; zero windows is broken.
+const LOG_PATH = path.join(app.getPath("userData"), "launch.log");
+function diag(msg) {
+  const line = `[${new Date().toISOString()}] ${msg}\n`;
+  try {
+    fs.mkdirSync(path.dirname(LOG_PATH), { recursive: true });
+    fs.appendFileSync(LOG_PATH, line);
+  } catch { /* best-effort */ }
+  // Also goes to stderr if anyone's listening.
+  try { process.stderr.write(`[telepathy-electron] ${msg}\n`); } catch { /* ignore */ }
+}
+diag(`starting pid=${process.pid} tokens=${tokens.length}`);
 
 let mainWindow = null;
 
-function createWindow() {
-  console.error("[telepathy-electron] createWindow");
+async function startWallServer() {
+  // Dynamically import the compiled ESM modules from dist/. Electron's
+  // main process is CommonJS by default, but dynamic import() works fine
+  // for ESM. file:// URLs avoid Windows path-separator quirks.
+  const apiUrl = pathToFileURL(path.join(__dirname, "..", "dist", "core", "api.js")).href;
+  const viewerUrl = pathToFileURL(path.join(__dirname, "..", "dist", "core", "viewer.js")).href;
+  const api = await import(apiUrl);
+  const viewer = await import(viewerUrl);
+
+  for (const token of tokens) {
+    try {
+      const r = await api.connectPeer({ token });
+      diag(`pre-linked peer ${r.alias} at ${r.remoteAddr}`);
+    } catch (err) {
+      diag(`pre-link failed: ${err && err.message ? err.message : String(err)}`);
+    }
+  }
+
+  await viewer.startViewer();
+  const url = viewer.getViewerUrl("/wall");
+  if (!url) {
+    throw new Error("startViewer did not return a URL");
+  }
+  diag(`wall url ready: ${url}`);
+  return url;
+}
+
+function createWindow(url) {
+  diag("createWindow");
   // center:true is mandatory on multi-monitor setups — without it
-  // Electron can place the window at out-of-range coordinates if any
-  // attached monitor uses negative coords (e.g. one to the left/above
-  // the primary). The user just sees nothing because the window is
-  // technically open but on a virtual screen they can't reach.
+  // Electron can place the window at out-of-range coords if any attached
+  // monitor uses negative coords. The window opens fine but the user
+  // can't see it.
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 760,
@@ -49,17 +92,14 @@ function createWindow() {
   });
   mainWindow.setMenuBarVisibility(false);
 
-  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
-    console.error(`[telepathy-electron] failed to load ${validatedURL}: ${errorDescription} (code ${errorCode})`);
+  mainWindow.webContents.on("did-fail-load", (_event, code, desc, url) => {
+    diag(`did-fail-load url=${url} code=${code} desc=${desc}`);
   });
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
-    console.error(`[telepathy-electron] renderer crashed: ${details.reason} (exitCode ${details.exitCode})`);
-  });
-  mainWindow.once("show", () => {
-    console.error("[telepathy-electron] window shown");
+    diag(`renderer crashed: ${details.reason} exitCode=${details.exitCode}`);
   });
   mainWindow.webContents.on("did-finish-load", () => {
-    console.error("[telepathy-electron] page loaded; bringing to front");
+    diag("did-finish-load");
     if (!mainWindow) {
       return;
     }
@@ -120,31 +160,27 @@ function buildMenu() {
   ]));
 }
 
-app.on("second-instance", () => {
-  // Multiple instances are now allowed (singleton-lock removed). If
-  // somehow this fires (it shouldn't without the lock), surface the
-  // existing window for good UX.
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) {
-      mainWindow.restore();
-    }
-    mainWindow.focus();
-  }
-});
-
-app.whenReady().then(() => {
-  console.error("[telepathy-electron] whenReady");
+app.whenReady().then(async () => {
+  diag("whenReady");
   buildMenu();
-  createWindow();
+  let url;
+  try {
+    url = await startWallServer();
+  } catch (err) {
+    diag(`startWallServer failed: ${err && err.message ? err.message : String(err)}`);
+    app.quit();
+    return;
+  }
+  createWindow(url);
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+      createWindow(url);
     }
   });
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
+  // No matter the platform — we're a single-window utility app.
+  // Closing the window stops the wall server (this whole process exits).
+  app.quit();
 });
