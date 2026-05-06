@@ -27,6 +27,19 @@ export async function runHost(opts: HostOptions): Promise<void> {
     TELEPATHY_LOCAL_ALIAS: process.env.TELEPATHY_ALIAS ?? hostname().toLowerCase(),
   };
 
+  // Bind the peer listener and print the banner FIRST, while we still own
+  // the terminal. Once startWrapper takes over (raw mode + ConPTY frames),
+  // the spawned shell's startup ANSI clobbers anything we write next.
+  if (!opts.noListen) {
+    try {
+      const result = await acceptStart(opts);
+      printBanner(result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(chalk.yellow(`telepathy host: peer listener failed (${msg}). Continuing without LAN exposure.\n`));
+    }
+  }
+
   const wrapper = await startWrapper({
     pipePath,
     command,
@@ -43,18 +56,11 @@ export async function runHost(opts: HostOptions): Promise<void> {
 
   // Connect the in-process API surface to the wrapper's IPC, so peer
   // subscribers fan-out from the same PTY the user is interacting with.
+  // (There's a microsecond window between acceptStart and this assignment
+  //  where an inbound pty_subscribe would be rejected; no real client can
+  //  hit it at human speed.)
   const localPty = await attachToWrapperIfPresent(pipePath);
   setLocalPty(localPty);
-
-  if (!opts.noListen) {
-    try {
-      const result = await acceptStart(opts);
-      printBanner(result);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(chalk.yellow(`telepathy host: peer listener failed (${msg}). Continuing without LAN exposure.\n`));
-    }
-  }
 }
 
 function resolveCommand(opts: HostOptions): { command: string; args: string[] } {
