@@ -6,19 +6,17 @@
 //   bytes 4..5   TCP port (big-endian uint16)
 //   bytes 6..13  8-byte random secret (used as PSK seed)
 //
-// Encoding: RFC 4648 base32 (no padding) prefixed with "TLP1." and
-// grouped with dashes for legibility:
-//
-//   TLP1.AAAAA-BBBBB-CCCCC-DDDDD-EE
-//
-// The "TLP1." prefix is a recognizable marker and a version stamp; if
-// the wire layout ever changes we'll bump to TLP2 and refuse old tokens
-// with a helpful error.
+// Encoding: RFC 4648 base32 (no padding) with a "TLP1" prefix that
+// doubles as a version stamp. The prefix uses '1' which is NOT in the
+// base32 alphabet (A-Z, 2-7), so the parser can split prefix from body
+// unambiguously while keeping the whole token a single "word" — no
+// dots, no dashes, no anything that breaks double-click select in
+// terminals. Total length is ~27 chars: "TLP1" + 23 base32 chars.
 
 import { networkInterfaces } from "node:os";
 import { randomBytes } from "node:crypto";
 
-const PREFIX = "TLP1.";
+const PREFIX = "TLP1";
 
 // RFC 4648 base32 alphabet.
 const B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
@@ -55,11 +53,13 @@ export function encodeToken(payload: TokenPayload): string {
 }
 
 export function decodeToken(token: string): TokenPayload {
-  const cleaned = token.trim().replace(/[\s_]/g, "");
-  if (!cleaned.toUpperCase().startsWith(PREFIX)) {
+  // Tolerate stray whitespace, dashes, underscores, and lowercase from
+  // hand-typed pastes (older tokens used dashes; humans add spaces).
+  const cleaned = token.trim().replace(/[\s_-]/g, "").toUpperCase();
+  if (!cleaned.startsWith(PREFIX)) {
     throw new Error(`decodeToken: missing "${PREFIX}" prefix — did you copy the whole token?`);
   }
-  const body = cleaned.slice(PREFIX.length).replace(/-/g, "").toUpperCase();
+  const body = cleaned.slice(PREFIX.length);
   const buf = base32Decode(body);
   if (buf.length !== 14) {
     throw new Error(`decodeToken: token decodes to ${buf.length} bytes, expected 14`);

@@ -12,32 +12,36 @@ describe("token round-trip", () => {
     assert.deepEqual(decoded.secret, secret);
   });
 
-  it("emits the expected TLP1. prefix + dashless base32 body (one word, easy to double-click)", () => {
+  it("emits the expected TLP1 prefix + dashless dotless base32 body (one word, easy to double-click)", () => {
     const token = encodeToken({ host: "10.0.0.1", port: 1, secret: Buffer.alloc(8) });
-    assert.match(token, /^TLP1\.[A-Z2-7]+$/);
+    assert.match(token, /^TLP1[A-Z2-7]+$/);
     assert.equal(token.includes("-"), false, "token must not contain dashes");
+    assert.equal(token.includes("."), false, "token must not contain dots");
+    assert.equal(token.includes(" "), false, "token must not contain spaces");
   });
 
-  it("tolerates whitespace, lowercase, and missing dashes on decode", () => {
+  it("tolerates whitespace, lowercase, dashes, and underscores on decode (legacy hand-typed tokens)", () => {
     const secret = generateSecret();
     const token = encodeToken({ host: "192.168.1.42", port: 7423, secret });
-    const sloppy = `  ${token.toLowerCase().replace(/-/g, "")}  `;
+    // Simulate someone manually adding whitespace, dashes, lowercase
+    const body = token.slice(4);  // strip "TLP1"
+    const sloppy = `  tlp1-${body.toLowerCase().slice(0, 5)}-${body.toLowerCase().slice(5, 10)}-${body.toLowerCase().slice(10)}  `;
     const decoded = decodeToken(sloppy);
     assert.equal(decoded.host, "192.168.1.42");
     assert.equal(decoded.port, 7423);
     assert.deepEqual(decoded.secret, secret);
   });
 
-  it("rejects tokens without the TLP1. prefix", () => {
-    assert.throws(() => decodeToken("AAAAA-BBBBB-CCCCC-DDDDD-EE"), /missing "TLP1\." prefix/);
+  it("rejects tokens without the TLP1 prefix", () => {
+    assert.throws(() => decodeToken("AAAAABBBBBCCCCCDDDDDEEEEE"), /missing "TLP1" prefix/);
   });
 
   it("rejects tokens with non-base32 characters", () => {
-    assert.throws(() => decodeToken("TLP1.AAAAA-BBBBB-CCCCC-DDDDD-9!"), /unexpected character/);
+    assert.throws(() => decodeToken("TLP1AAAAABBBBBCCCCCDDDDDEE9!"), /unexpected character/);
   });
 
   it("rejects tokens that decode to the wrong byte length", () => {
-    assert.throws(() => decodeToken("TLP1.AA"), /expected 14/);
+    assert.throws(() => decodeToken("TLP1AA"), /expected 14/);
   });
 
   it("encodes ports correctly across the full range", () => {
