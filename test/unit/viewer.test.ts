@@ -24,6 +24,33 @@ function get(path: string, port: number): Promise<{ status: number; body: string
   });
 }
 
+function post(path: string, port: number, body: unknown): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const payload = body === undefined ? "" : JSON.stringify(body);
+    const req = httpRequest({
+      hostname: "127.0.0.1",
+      port,
+      path,
+      method: "POST",
+      headers: {
+        Connection: "close",
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(payload).toString(),
+      },
+    }, (res) => {
+      let buf = "";
+      res.on("data", (c) => {
+        buf += c.toString("utf8"); 
+      });
+      res.on("end", () => resolve({ status: res.statusCode ?? 0, body: buf }));
+      res.on("error", reject);
+    });
+    req.on("error", reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
 describe("viewer HTTP server", () => {
   it("rejects requests without the token", async () => {
     const v = await startViewer();
@@ -50,7 +77,8 @@ describe("viewer HTTP server", () => {
     try {
       const r = await get(`/wall?t=${getViewerToken()}`, v.port);
       assert.equal(r.status, 200);
-      assert.match(r.body, /<title>telepathy wall<\/title>/i);
+      assert.match(r.body, /<title>telepathy<\/title>/i);
+      assert.match(r.body, /id="tabbar"/);
     } finally {
       stopViewer();
     }
@@ -74,6 +102,40 @@ describe("viewer HTTP server", () => {
       assert.equal(r.status, 200);
       const parsed = JSON.parse(r.body) as { peers: unknown[] };
       assert.deepEqual(parsed.peers, []);
+    } finally {
+      stopViewer();
+    }
+  });
+
+  it("POST /api/connect rejects an invalid token", async () => {
+    const v = await startViewer();
+    try {
+      const r = await post(`/api/connect?t=${getViewerToken()}`, v.port, { token: "not-a-token" });
+      assert.equal(r.status, 400);
+      const parsed = JSON.parse(r.body) as { error: string };
+      assert.match(parsed.error, /invalid join token/i);
+    } finally {
+      stopViewer();
+    }
+  });
+
+  it("POST /api/connect rejects missing token field", async () => {
+    const v = await startViewer();
+    try {
+      const r = await post(`/api/connect?t=${getViewerToken()}`, v.port, {});
+      assert.equal(r.status, 400);
+    } finally {
+      stopViewer();
+    }
+  });
+
+  it("POST /api/disconnect/<alias> reports zero disconnected for unknown peer", async () => {
+    const v = await startViewer();
+    try {
+      const r = await post(`/api/disconnect/never-existed?t=${getViewerToken()}`, v.port, undefined);
+      assert.equal(r.status, 200);
+      const parsed = JSON.parse(r.body) as { disconnected: string[] };
+      assert.deepEqual(parsed.disconnected, []);
     } finally {
       stopViewer();
     }

@@ -52,10 +52,9 @@ program
 
 program
   .command("app [tokens...]")
-  .description("Open the multi-peer wall viewer (optionally pre-link the given tokens)")
-  .option("--no-windowed", "Open in default browser (vs. chrome --app= chromeless window)")
-  .action(async (tokens: string[], options) => {
-    await runApp({ tokens, windowed: options.windowed });
+  .description("Open the Electron wall viewer (multi-tab, resizable, pulse-on-activity)")
+  .action(async (tokens: string[]) => {
+    await runApp({ tokens });
   });
 
 program

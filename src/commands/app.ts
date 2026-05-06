@@ -1,18 +1,33 @@
-// `telepathy app [<token>...]` — opens the multi-peer wall viewer in a
-// browser window. Optional tokens passed on the command line are
-// connected up-front so they show up immediately in the wall.
+// `telepathy app [tokens...]` — open the Electron wall viewer.
+//
+// Electron is required. If the local install is missing, fail loudly with
+// the exact command to fix it. We don't fall back to the system browser:
+// the windowed app experience IS the product, and a bare-tab fallback
+// gives a wildly different UX (no menu bar, no app icon, no app-mode
+// chromeless window).
 
 import { connectPeer } from "../core/api.js";
 import { startViewer, getViewerUrl } from "../core/viewer.js";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join, resolve } from "node:path";
 import chalk from "chalk";
 
 export type AppOptions = {
   tokens: string[];
-  windowed?: boolean; // open with `chrome --app=URL` for a chromeless window
 };
 
 export async function runApp(opts: AppOptions): Promise<void> {
+  const electron = findElectron();
+  if (!electron) {
+    process.stderr.write(chalk.red("telepathy app: Electron isn't installed in this checkout.\n"));
+    const electronDir = resolveElectronDir();
+    process.stderr.write(chalk.dim(`   Run:  cd ${electronDir} && npm install\n`));
+    process.stderr.write(chalk.dim("   Then re-run `telepathy app`.\n"));
+    process.exit(2);
+  }
+
   for (const token of opts.tokens) {
     try {
       const r = await connectPeer({ token });
@@ -22,6 +37,7 @@ export async function runApp(opts: AppOptions): Promise<void> {
       process.stderr.write(chalk.yellow(`skip token (${msg})\n`));
     }
   }
+
   await startViewer();
   const url = getViewerUrl("/wall");
   if (!url) {
@@ -29,42 +45,39 @@ export async function runApp(opts: AppOptions): Promise<void> {
     process.exit(1);
   }
   process.stderr.write(`${chalk.green("🛰  wall:")} ${url}\n`);
-  openInBrowser(url, opts.windowed ?? true);
-  await new Promise(() => undefined);
+  const main = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "electron", "main.cjs");
+  spawn(electron.bin, [main, `--url=${url}`], {
+    cwd: electron.cwd,
+    detached: true,
+    stdio: "ignore",
+  }).unref();
+  process.stderr.write(chalk.dim("   window: Electron\n"));
+  process.stderr.write(chalk.dim("   Press Ctrl-C to stop the wall server.\n"));
+  await new Promise<never>((_, reject) => {
+    process.once("SIGINT", () => process.exit(0));
+    process.once("uncaughtException", reject);
+  });
 }
 
-function openInBrowser(url: string, windowed: boolean): void {
-  if (windowed && process.platform === "win32") {
-    // Try to launch Chrome/Edge as an "app" window (no tab bar / address bar).
-    const chrome = findChromeOnWindows();
-    if (chrome) {
-      spawn(chrome, [`--app=${url}`], { detached: true, stdio: "ignore" }).unref();
-      return;
-    }
-  }
-  // Fallback: hand off to the OS default browser.
-  if (process.platform === "win32") {
-    spawn("cmd.exe", ["/c", "start", "", url], { detached: true, stdio: "ignore" }).unref();
-  } else if (process.platform === "darwin") {
-    spawn("open", [url], { detached: true, stdio: "ignore" }).unref();
-  } else {
-    spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
-  }
+function resolveElectronDir(): string {
+  // dist/commands/app.js → ../../electron/
+  return resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "electron");
 }
 
-function findChromeOnWindows(): string | null {
-  const candidates = [
-    `${process.env["ProgramFiles"] ?? ""}\\Google\\Chrome\\Application\\chrome.exe`,
-    `${process.env["ProgramFiles(x86)"] ?? ""}\\Google\\Chrome\\Application\\chrome.exe`,
-    `${process.env["LocalAppData"] ?? ""}\\Google\\Chrome\\Application\\chrome.exe`,
-    `${process.env["ProgramFiles"] ?? ""}\\Microsoft\\Edge\\Application\\msedge.exe`,
-    `${process.env["ProgramFiles(x86)"] ?? ""}\\Microsoft\\Edge\\Application\\msedge.exe`,
-  ];
-  // eslint-disable-next-line @typescript-eslint/no-require-imports -- async import not worth the refactor cost here
-  const fs = require("node:fs") as typeof import("node:fs");
-  for (const p of candidates) {
-    if (p && fs.existsSync(p)) {
-      return p;
+export function findElectron(): { bin: string; cwd: string } | null {
+  const electronDir = resolveElectronDir();
+  const localBins = process.platform === "win32"
+    ? [
+      join(electronDir, "node_modules", ".bin", "electron.cmd"),
+      join(electronDir, "node_modules", "electron", "dist", "electron.exe"),
+    ]
+    : [
+      join(electronDir, "node_modules", ".bin", "electron"),
+      join(electronDir, "node_modules", "electron", "dist", "electron"),
+    ];
+  for (const bin of localBins) {
+    if (existsSync(bin)) {
+      return { bin, cwd: electronDir };
     }
   }
   return null;

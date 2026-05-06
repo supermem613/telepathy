@@ -4,6 +4,7 @@
 import chalk from "chalk";
 import { createServer } from "node:net";
 import { DEFAULT_PORT } from "../core/protocol.js";
+import { findElectron } from "./app.js";
 
 export type CheckResult = {
   name: string;
@@ -52,34 +53,12 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
     hint: portFree ? undefined : "another telepathy host or process is bound — pass `--port <n>` to pick a different port.",
   });
 
-  let chromeOk = false;
-  let chromeDetail = "default browser only (windowed mode falls back)";
-  if (process.platform === "win32") {
-    const candidates = [
-      `${process.env["ProgramFiles"] ?? ""}\\Google\\Chrome\\Application\\chrome.exe`,
-      `${process.env["ProgramFiles(x86)"] ?? ""}\\Google\\Chrome\\Application\\chrome.exe`,
-      `${process.env["LocalAppData"] ?? ""}\\Google\\Chrome\\Application\\chrome.exe`,
-      `${process.env["ProgramFiles"] ?? ""}\\Microsoft\\Edge\\Application\\msedge.exe`,
-      `${process.env["ProgramFiles(x86)"] ?? ""}\\Microsoft\\Edge\\Application\\msedge.exe`,
-    ];
-    const fs = await import("node:fs");
-    for (const p of candidates) {
-      if (p && fs.existsSync(p)) {
-        chromeOk = true;
-        chromeDetail = `windowed mode available (${p.split("\\").pop()})`;
-        break;
-      }
-    }
-  } else {
-    chromeOk = true;
-    chromeDetail = "default browser will be used";
-  }
+  const electron = findElectron();
   checks.push({
-    name: "browser available",
-    ok: chromeOk,
-    detail: chromeDetail,
-    optional: true,
-    hint: chromeOk ? undefined : "install Chrome or Edge to get a chromeless `telepathy app` window. Without it, `app` opens in your default browser instead.",
+    name: "Electron installed",
+    ok: !!electron,
+    detail: electron ? `found at ${electron.bin}` : "not installed",
+    hint: electron ? undefined : "Run: cd electron && npm install   (one-time setup; ~80MB download)",
   });
 
   if (opts.json) {

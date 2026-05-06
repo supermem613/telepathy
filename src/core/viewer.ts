@@ -18,6 +18,7 @@ import {
   sendRemoteInput,
 } from "./orchestrator.js";
 import { listPeers, getPeer, type Peer } from "./peers.js";
+import { connectPeer, disconnectPeer } from "./api.js";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_VIEWER_PORT } from "./protocol.js";
 
@@ -53,32 +54,56 @@ export async function startViewer(opts: { port?: number } = {}): Promise<ViewerS
   const port = await pickFreePort(opts.port ?? DEFAULT_VIEWER_PORT);
   const staticRoot = resolveStaticRoot();
 
-  const server = createHttpServer((req, res) => {
+  const server = createHttpServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "127.0.0.1"}`);
     if (url.searchParams.get("t") !== token) {
       res.writeHead(401, { "Content-Type": "text/plain" });
       res.end("unauthorized");
       return;
     }
-    if (url.pathname === "/" || url.pathname === "/wall") {
+    if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/wall")) {
       serveFile(res, join(staticRoot, "wall.html"), "text/html");
       return;
     }
-    if (url.pathname.startsWith("/peer/")) {
+    if (req.method === "GET" && url.pathname.startsWith("/peer/")) {
       serveFile(res, join(staticRoot, "peer.html"), "text/html");
       return;
     }
-    if (url.pathname === "/api/peers") {
+    if (req.method === "GET" && url.pathname === "/api/peers") {
       const peers = listPeers().map(toPeerInfo);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ peers }));
       return;
     }
-    if (url.pathname.startsWith("/static/")) {
+    if (req.method === "POST" && url.pathname === "/api/connect") {
+      try {
+        const body = await readJsonBody<{ token?: string; alias?: string }>(req);
+        if (!body.token || typeof body.token !== "string") {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "missing 'token' field" }));
+          return;
+        }
+        const result = await connectPeer({ token: body.token, alias: body.alias });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: msg }));
+      }
+      return;
+    }
+    if (req.method === "POST" && url.pathname.startsWith("/api/disconnect/")) {
+      const alias = decodeURIComponent(url.pathname.slice("/api/disconnect/".length));
+      const result = disconnectPeer({ peer: alias });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(result));
+      return;
+    }
+    if (req.method === "GET" && url.pathname.startsWith("/static/")) {
       const sub = url.pathname.slice("/static/".length);
       const candidates = [
         join(staticRoot, sub),
-        // Pull bundled xterm.js bits from node_modules so we don't ship copies.
         resolveModuleAsset(sub),
       ].filter((p): p is string => p !== null && existsSync(p));
       if (candidates.length > 0) {
@@ -291,4 +316,21 @@ function guessMime(p: string): string {
     return "application/json";
   }
   return "application/octet-stream";
+}
+
+function readJsonBody<T>(req: import("node:http").IncomingMessage): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let raw = "";
+    req.on("data", (c) => {
+      raw += c.toString("utf8"); 
+    });
+    req.on("end", () => {
+      try {
+        resolve(JSON.parse(raw || "{}") as T);
+      } catch (err) {
+        reject(err);
+      }
+    });
+    req.on("error", reject);
+  });
 }

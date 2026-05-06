@@ -6,7 +6,10 @@ import { connectPeer } from "../core/api.js";
 import { startViewer, getViewerUrl } from "../core/viewer.js";
 import { addOrchestratorEvents } from "../core/orchestrator.js";
 import { runTermMode } from "./term.js";
+import { findElectron } from "./app.js";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import chalk from "chalk";
 
 export type ConnectCommandOptions = {
@@ -19,6 +22,12 @@ export async function runConnect(opts: ConnectCommandOptions): Promise<void> {
   if (opts.term) {
     await runTermMode({ token: opts.token, alias: opts.alias });
     return;
+  }
+  const electron = findElectron();
+  if (!electron) {
+    process.stderr.write(chalk.red("telepathy connect: Electron isn't installed; the windowed viewer can't open.\n"));
+    process.stderr.write(chalk.dim("   Either run `cd electron && npm install` (one-time) or use --term to mirror in this terminal instead.\n"));
+    process.exit(2);
   }
   let result;
   try {
@@ -39,10 +48,12 @@ export async function runConnect(opts: ConnectCommandOptions): Promise<void> {
   }
   process.stderr.write(`${chalk.green("🖥  viewer:")} ${url}\n`);
   process.stderr.write(chalk.dim("   Press Ctrl-C to disconnect.\n"));
-  openInBrowser(url);
-  // Exit cleanly when the host disconnects (e.g. they typed `exit` in
-  // the wrapped shell) — otherwise the user is stuck staring at a dead
-  // browser viewer with no obvious way out.
+  const main = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "electron", "main.cjs");
+  spawn(electron.bin, [main, `--url=${url}`], {
+    cwd: electron.cwd,
+    detached: true,
+    stdio: "ignore",
+  }).unref();
   addOrchestratorEvents({
     onPeerDisconnected: (peer, reason) => {
       process.stderr.write(`\n${chalk.dim(`(remote ${peer.alias} disconnected${reason ? `: ${reason}` : ""})`)}\n`);
@@ -56,14 +67,4 @@ export async function runConnect(opts: ConnectCommandOptions): Promise<void> {
     });
     process.once("uncaughtException", reject);
   });
-}
-
-function openInBrowser(url: string): void {
-  if (process.platform === "win32") {
-    spawn("cmd.exe", ["/c", "start", "", url], { detached: true, stdio: "ignore" }).unref();
-  } else if (process.platform === "darwin") {
-    spawn("open", [url], { detached: true, stdio: "ignore" }).unref();
-  } else {
-    spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
-  }
 }
