@@ -96,6 +96,15 @@ program
     await runDoctor({ json: options.json });
   });
 
+// Bare `telepathy` (no args) prints version + full help. Matches the
+// rotunda/kash/reflux convention. Doesn't print before sub-commands so
+// machine-parseable output stays clean.
+if (process.argv.slice(2).length === 0) {
+  process.stdout.write(`telepathy v${VERSION}\n\n`);
+  program.outputHelp();
+  process.exit(0);
+}
+
 program.parseAsync(process.argv).catch((err) => {
   process.stderr.write(`telepathy: ${err instanceof Error ? err.message : String(err)}\n`);
   process.exit(1);
