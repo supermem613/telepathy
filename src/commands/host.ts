@@ -71,6 +71,32 @@ export async function runHost(opts: HostOptions): Promise<void> {
 
 // Race "first peer connects" against "user presses any key". Resolves on
 // whichever happens first. Idempotent — both branches clean up the other.
+// Decide whether a stdin chunk should count as a deliberate user keypress
+// when we're holding before spawning the shell. Exported so tests can pin
+// the policy: terminal-generated escape sequences (focus events, mouse
+// events, arrow keys, bracketed paste, cursor reports) must NOT count,
+// because in raw mode terminals emit them constantly (e.g. on every
+// alt-tab) and the user would never get a chance to actually wait.
+//
+// A standalone ESC press (single 0x1b byte) IS treated as a key.
+//
+// Returns "abort" for Ctrl-C (caller should exit 130), "key" for a real
+// keypress, or "ignore" for anything we should not treat as user intent.
+export type KeyClass = "key" | "abort" | "ignore";
+
+export function classifyHoldInput(chunk: Buffer): KeyClass {
+  if (chunk.length === 0) {
+    return "ignore";
+  }
+  if (chunk[0] === 0x03) {
+    return "abort";
+  }
+  if (chunk[0] === 0x1b && chunk.length > 1) {
+    return "ignore";
+  }
+  return "key";
+}
+
 function holdForFirstPeerOrKeypress(): Promise<"peer" | "key"> {
   return new Promise((resolve) => {
     let done = false;
@@ -89,11 +115,14 @@ function holdForFirstPeerOrKeypress(): Promise<"peer" | "key"> {
     });
 
     const onKey = (chunk: Buffer): void => {
-      // Ctrl-C in the holding state aborts cleanly.
-      if (chunk.length > 0 && chunk[0] === 0x03) {
+      const cls = classifyHoldInput(chunk);
+      if (cls === "abort") {
         cleanup();
         process.stderr.write(chalk.dim("\n(aborted)\n"));
         process.exit(130);
+      }
+      if (cls === "ignore") {
+        return;
       }
       settle("key", chalk.dim("✔ keypress detected. Spawning shell..."));
     };
