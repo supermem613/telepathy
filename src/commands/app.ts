@@ -21,10 +21,7 @@ export type AppOptions = {
 export async function runApp(opts: AppOptions): Promise<void> {
   const electron = findElectron();
   if (!electron) {
-    process.stderr.write(chalk.red("telepathy app: Electron isn't installed in this checkout.\n"));
-    const electronDir = resolveElectronDir();
-    process.stderr.write(chalk.dim(`   Run:  cd ${electronDir} && npm install\n`));
-    process.stderr.write(chalk.dim("   Then re-run `telepathy app`.\n"));
+    process.stderr.write(chalk.red("telepathy app: Electron isn't installed. Run `npm install` in the repo root.\n"));
     process.exit(2);
   }
 
@@ -59,25 +56,21 @@ export async function runApp(opts: AppOptions): Promise<void> {
   });
 }
 
-function resolveElectronDir(): string {
-  // dist/commands/app.js → ../../electron/
-  return resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "electron");
-}
-
 export function findElectron(): { bin: string; cwd: string } | null {
-  const electronDir = resolveElectronDir();
+  // dist/commands/app.js → ../../  (repo root, where node_modules/.bin/electron lives)
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
   const localBins = process.platform === "win32"
     ? [
-      join(electronDir, "node_modules", ".bin", "electron.cmd"),
-      join(electronDir, "node_modules", "electron", "dist", "electron.exe"),
+      join(root, "node_modules", ".bin", "electron.cmd"),
+      join(root, "node_modules", "electron", "dist", "electron.exe"),
     ]
     : [
-      join(electronDir, "node_modules", ".bin", "electron"),
-      join(electronDir, "node_modules", "electron", "dist", "electron"),
+      join(root, "node_modules", ".bin", "electron"),
+      join(root, "node_modules", "electron", "dist", "electron"),
     ];
   for (const bin of localBins) {
     if (existsSync(bin)) {
-      return { bin, cwd: electronDir };
+      return { bin, cwd: root };
     }
   }
   return null;

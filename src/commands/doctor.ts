@@ -58,7 +58,7 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
     name: "Electron installed",
     ok: !!electron,
     detail: electron ? `found at ${electron.bin}` : "not installed",
-    hint: electron ? undefined : "Run: cd electron && npm install   (one-time setup; ~80MB download)",
+    hint: electron ? undefined : "Run: npm install   (electron is a regular dep; ~80MB download)",
   });
 
   if (opts.json) {

@@ -26,7 +26,7 @@ export async function runConnect(opts: ConnectCommandOptions): Promise<void> {
   const electron = findElectron();
   if (!electron) {
     process.stderr.write(chalk.red("telepathy connect: Electron isn't installed; the windowed viewer can't open.\n"));
-    process.stderr.write(chalk.dim("   Either run `cd electron && npm install` (one-time) or use --term to mirror in this terminal instead.\n"));
+    process.stderr.write(chalk.dim("   Either run `npm install` in the repo root, or use --term to mirror in this terminal instead.\n"));
     process.exit(2);
   }
   let result;

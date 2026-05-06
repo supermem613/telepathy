@@ -1,5 +1,18 @@
 node_modules/
 dist/
 .telepathy/
+
+# build artifacts / local
 *.tgz
 *.log
+.DS_Store
+.last-installed-hash
+
+# editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Electron asar cache (created by electron at runtime)
+.electron-symbols/
