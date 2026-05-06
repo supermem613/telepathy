@@ -49,14 +49,11 @@ export async function runConnect(opts: ConnectCommandOptions): Promise<void> {
   process.stderr.write(`${chalk.green("🖥  viewer:")} ${url}\n`);
   process.stderr.write(chalk.dim("   Press Ctrl-C to disconnect.\n"));
   const main = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "electron", "main.cjs");
-  // shell:true is REQUIRED on Windows: electron.cmd is a Windows batch
-  // shim, and Node ≥20.12 refuses to spawn .cmd/.bat directly without
-  // shell:true (CVE-2024-27980 mitigation, throws EINVAL).
   spawn(electron.bin, [main, `--url=${url}`], {
     cwd: electron.cwd,
     detached: true,
     stdio: "ignore",
-    shell: process.platform === "win32",
+    windowsHide: true,
   }).unref();
   addOrchestratorEvents({
     onPeerDisconnected: (peer, reason) => {

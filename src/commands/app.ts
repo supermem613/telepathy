@@ -43,14 +43,15 @@ export async function runApp(opts: AppOptions): Promise<void> {
   }
   process.stderr.write(`${chalk.green("🛰  wall:")} ${url}\n`);
   const main = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "electron", "main.cjs");
-  // shell:true is REQUIRED on Windows: electron.cmd is a Windows batch
-  // shim, and Node ≥20.12 refuses to spawn .cmd/.bat directly without
-  // shell:true (CVE-2024-27980 mitigation, throws EINVAL).
+  // Spawn electron.exe directly (no .cmd shim) so we can avoid shell:true
+  // — which on Windows + detached creates a visible cmd.exe console window.
+  // windowsHide:true belt-and-suspenders for the case where the shim
+  // fallback is in use (existsSync miss on the dist/electron.exe path).
   spawn(electron.bin, [main, `--url=${url}`], {
     cwd: electron.cwd,
     detached: true,
     stdio: "ignore",
-    shell: process.platform === "win32",
+    windowsHide: true,
   }).unref();
   process.stderr.write(chalk.dim("   window: Electron\n"));
   process.stderr.write(chalk.dim("   Press Ctrl-C to stop the wall server.\n"));
@@ -61,21 +62,24 @@ export async function runApp(opts: AppOptions): Promise<void> {
 }
 
 export function findElectron(): { bin: string; cwd: string } | null {
-  // dist/commands/app.js → ../../  (repo root, where node_modules/.bin/electron lives)
+  // dist/commands/app.js → ../../  (repo root, where node_modules lives)
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-  const localBins = process.platform === "win32"
-    ? [
-      join(root, "node_modules", ".bin", "electron.cmd"),
-      join(root, "node_modules", "electron", "dist", "electron.exe"),
-    ]
-    : [
-      join(root, "node_modules", ".bin", "electron"),
-      join(root, "node_modules", "electron", "dist", "electron"),
-    ];
-  for (const bin of localBins) {
-    if (existsSync(bin)) {
-      return { bin, cwd: root };
-    }
+  // Skip the .bin/electron.cmd shim entirely — spawning .cmd on Windows
+  // requires shell:true (CVE-2024-27980 mitigation), which on top of
+  // detached:true creates a visible cmd.exe console window. Use the
+  // platform-native binary directly: it spawns clean, no console, no shell.
+  const distExe = process.platform === "win32"
+    ? join(root, "node_modules", "electron", "dist", "electron.exe")
+    : join(root, "node_modules", "electron", "dist", "electron");
+  if (existsSync(distExe)) {
+    return { bin: distExe, cwd: root };
+  }
+  // Fallback to the .bin shim if the dist binary is missing for some reason.
+  const shim = process.platform === "win32"
+    ? join(root, "node_modules", ".bin", "electron.cmd")
+    : join(root, "node_modules", ".bin", "electron");
+  if (existsSync(shim)) {
+    return { bin: shim, cwd: root };
   }
   return null;
 }
