@@ -19,9 +19,11 @@ import {
   sendRemoteResize,
 } from "./orchestrator.js";
 import { listPeers, getPeer, type Peer } from "./peers.js";
-import { connectPeer, disconnectPeer } from "./api.js";
+import { connectPeer, disconnectPeer, getPeerOrThrow } from "./api.js";
+import { sendRequest } from "./peers.js";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_VIEWER_PORT } from "./protocol.js";
+import type { SpawnHostAckMessage } from "./protocol.js";
 
 export type ViewerState = {
   server: HttpServer;
@@ -99,6 +101,34 @@ export async function startViewer(opts: { port?: number } = {}): Promise<ViewerS
       const result = disconnectPeer({ peer: alias });
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(result));
+      return;
+    }
+    if (req.method === "POST" && url.pathname.startsWith("/api/spawn-host/")) {
+      // Ask the named peer to spawn a sibling `telepathy host` on its
+      // box, capture the new join token via the in-protocol RPC, and
+      // immediately route it through the existing connectPeer flow so
+      // the result shape matches /api/connect — the wall just appends a
+      // new tab on success.
+      const alias = decodeURIComponent(url.pathname.slice("/api/spawn-host/".length));
+      try {
+        const peer = getPeerOrThrow(alias);
+        const requestId = randomUUID();
+        const ack = await sendRequest<SpawnHostAckMessage>(
+          peer,
+          { type: "spawn_host", id: requestId },
+          35_000,  // a hair longer than the host-side 30s handoff timeout
+        );
+        if (!ack.ok || !ack.token) {
+          throw new Error(ack.error ?? "remote host did not return a token");
+        }
+        const result = await connectPeer({ token: ack.token });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: msg }));
+      }
       return;
     }
     if (req.method === "GET" && url.pathname.startsWith("/static/")) {

@@ -125,6 +125,23 @@
   }
   .tab:hover .close, .tab.active .close { opacity: 0.7; }
   .tab .close:hover { opacity: 1; background: rgba(239,68,68,0.2); color: #fca5a5; }
+  /* Per-tab spawn-host icon. Sits between the label and the close button.
+     Clicking it asks THIS tab's host machine to launch a sibling
+     `telepathy host` in a new visible terminal window and auto-connects
+     a fresh tab to it. Fades in on hover/active just like .close. */
+  .tab .spawn {
+    color: var(--fg-dim);
+    width: 18px; height: 18px; border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; line-height: 1;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 120ms, background 120ms, color 120ms;
+  }
+  .tab:hover .spawn, .tab.active .spawn { opacity: 0.7; }
+  .tab .spawn:hover { opacity: 1; background: #1c1c1c; color: var(--accent); }
+  .tab .spawn.busy { opacity: 1; color: var(--accent); animation: spawn-pulse 1s ease-in-out infinite; }
+  @keyframes spawn-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
   .tab-add {
     display: flex; align-items: center; justify-content: center;
     width: 32px; cursor: pointer; color: var(--fg-dim);
@@ -353,6 +370,27 @@
   $("reload").addEventListener("click", () => location.reload());
   $("empty-add").addEventListener("click", openModal);
   $("modal-cancel").addEventListener("click", closeModal);
+
+  // ---- spawn-host (per tab) ---------------------------------------------
+  // Click handler for the per-tab ⎘ icon. Targets the tab's own peer (NOT
+  // necessarily the active one) so the user can spawn from any visible
+  // tab even while a different one has focus. Ignores re-clicks while a
+  // spawn is already in flight on the same tab.
+  async function spawnFromTab(targetAlias, spawnEl) {
+    if (spawnEl.classList.contains("busy")) { return; }
+    spawnEl.classList.add("busy");
+    showToast("Spawning host on " + targetAlias + "…");
+    try {
+      const r = await api("POST", "/api/spawn-host/" + encodeURIComponent(targetAlias));
+      await refreshPeers();
+      activate(r.alias);
+      showToast("Connected to " + r.alias);
+    } catch (err) {
+      showToast("Spawn-host failed: " + (err.message || err), true);
+    } finally {
+      spawnEl.classList.remove("busy");
+    }
+  }
   modalBg.addEventListener("click", (e) => { if (e.target === modalBg) { closeModal(); } });
   tokenInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { onModalOk(); }
@@ -422,7 +460,10 @@
       const close = document.createElement("span"); close.className = "close"; close.textContent = "✕";
       close.title = "Close tab (disconnect)";
       close.addEventListener("click", (e) => { e.stopPropagation(); closeTab(peer.alias); });
-      tab.append(dot, label, close);
+      const spawn = document.createElement("span"); spawn.className = "spawn"; spawn.textContent = "⎘";
+      spawn.title = "Spawn another telepathy host on " + peer.alias + " and auto-connect";
+      spawn.addEventListener("click", (e) => { e.stopPropagation(); spawnFromTab(peer.alias, spawn); });
+      tab.append(dot, label, spawn, close);
       tab.addEventListener("click", () => activate(peer.alias));
       tabsEl.appendChild(tab);
 
@@ -597,9 +638,26 @@
     if (alias) { emptyEl.style.display = "none"; }
   }
 
+  // Pick the alias to focus after `closedAlias` disappears: the nearest
+  // still-alive tab to the left in insertion order, or the nearest to
+  // the right if there's nothing left. `aliasOrderBeforeClose` is the
+  // tabs.keys() snapshot taken BEFORE the tab was removed.
+  function pickPreviousTab(closedAlias, aliasOrderBeforeClose) {
+    const idx = aliasOrderBeforeClose.indexOf(closedAlias);
+    if (idx < 0) { return tabs.keys().next().value || null; }
+    for (let i = idx - 1; i >= 0; i--) {
+      if (tabs.has(aliasOrderBeforeClose[i])) { return aliasOrderBeforeClose[i]; }
+    }
+    for (let i = idx + 1; i < aliasOrderBeforeClose.length; i++) {
+      if (tabs.has(aliasOrderBeforeClose[i])) { return aliasOrderBeforeClose[i]; }
+    }
+    return null;
+  }
+
   async function closeTab(alias) {
     const entry = tabs.get(alias);
     if (!entry) { return; }
+    const aliasOrderBeforeClose = Array.from(tabs.keys());
     try { entry.ws.close(); } catch (_) {}
     try { entry.term.dispose(); } catch (_) {}
     entry.tab.remove();
@@ -607,7 +665,7 @@
     tabs.delete(alias);
     try { await api("POST", "/api/disconnect/" + encodeURIComponent(alias)); } catch (_) {}
     if (activeAlias === alias) {
-      const next = tabs.keys().next().value;
+      const next = pickPreviousTab(alias, aliasOrderBeforeClose);
       if (next) { activate(next); }
       else { activeAlias = null; emptyEl.style.display = "flex"; }
     }
@@ -639,6 +697,17 @@
     input.addEventListener("dblclick", (e) => e.stopPropagation());
     input.focus();
     input.select();
+    // The dblclick that brought us here was preceded by two `click`s,
+    // each of which called activate(), and activate() schedules
+    // `term.focus()` in a requestAnimationFrame. Without this, the
+    // queued RAFs run after our synchronous input.focus() above and
+    // steal focus back to the terminal — typing then goes to the PTY
+    // instead of the rename input, and the user thinks rename "isn't
+    // working". Re-focusing inside our own RAF puts us at the back of
+    // the same queue so we win the race.
+    requestAnimationFrame(() => {
+      try { input.focus(); input.select(); } catch (_) {}
+    });
     let done = false;
     const commit = (newText) => {
       if (done) return;
@@ -677,8 +746,14 @@
         }
       }
     }
-    // Drop tabs whose peers are gone.
-    for (const a of Array.from(tabs.keys())) {
+    // Drop tabs whose peers are gone. If the active tab itself was
+    // reaped (e.g. user typed `exit` in the shell, host process died,
+    // peer disconnected), focus the nearest surviving tab to the left
+    // — same UX as manual close. Without this, the wall ends up with
+    // no active tab and the user has to click one manually.
+    const aliasOrderBeforeReap = Array.from(tabs.keys());
+    const activeWasReaped = activeAlias != null && !aliases.has(activeAlias);
+    for (const a of aliasOrderBeforeReap) {
       if (!aliases.has(a)) {
         const entry = tabs.get(a);
         try { entry.ws.close(); } catch (_) {}
@@ -687,6 +762,11 @@
         entry.termHost.remove();
         tabs.delete(a);
       }
+    }
+    if (activeWasReaped) {
+      const next = pickPreviousTab(activeAlias, aliasOrderBeforeReap);
+      if (next) { activate(next); }
+      else { activeAlias = null; }
     }
     if (tabs.size === 0) { emptyEl.style.display = "flex"; }
   }

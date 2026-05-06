@@ -2,7 +2,7 @@
 
 > Peer-to-peer terminal sharing over the LAN: expose any process under ConPTY, watch from any other box.
 
-Two boxes on the same intranet. Box A runs `telepathy host` — its shell is now reachable on the LAN behind a TLS-PSK token. Box B runs `telepathy connect <token>` to mirror it in a browser wall (or `telepathy app` for the Electron wall with tabs, mouse selection, and renaming). No cloud, no port-forward, no shared session host.
+Two boxes on the same intranet. Box A runs `telepathy host` — its shell is now reachable on the LAN behind a TLS-PSK token. Box B runs `telepathy connect <token>` to mirror it in a browser wall (or `telepathy app` for the Electron wall with tabs, mouse selection, renaming, and one-click "spawn another shell on box A" via the per-tab ⎘ button). No cloud, no port-forward, no shared session host.
 
 ## Quick start
 
@@ -34,7 +34,7 @@ telepathy app TLP1YCUACRI477YZWUANC5FW66Y   # opens the Electron wall pre-linked
 telepathy connect TLP1YCUACRI477YZWUANC5FW66Y --term   # mirror in this terminal (Ctrl-] to detach)
 ```
 
-Box A's shell spawns the moment a peer connects. From the wall: type into the active tab, watch frames stream in real time, double-click a tab label to rename it.
+Box A's shell spawns the moment a peer connects. From the wall: type into the active tab, watch frames stream in real time, double-click a tab label to rename it, click the per-tab ⎘ to spawn a sibling `telepathy host` in a fresh terminal window on that tab's host machine and auto-attach it as a new tab.
 
 ## Commands
 
@@ -42,7 +42,7 @@ Box A's shell spawns the moment a peer connects. From the wall: type into the ac
 |---|---|
 | `telepathy host` | Wrap your shell (or any command after `--`) under ConPTY, bind a TLS-PSK listener, print a join token |
 | `telepathy connect <token>` | Link to a host's wall in a browser (default), or mirror it in this terminal with `--term` |
-| `telepathy app [tokens...]` | Open the Electron wall viewer; auto-links any tokens passed as args |
+| `telepathy app [tokens...]` | Open the Electron wall viewer; auto-links any tokens passed as args. Each tab has a ⎘ button that asks the tab's host machine to spawn a sibling `telepathy host` in a fresh terminal window and auto-attaches it as a new tab (Windows host only) |
 | `telepathy peers` | List active peer links and the local listener (if any) — `--json` for scripting |
 | `telepathy disconnect [peer]` | Tear down one peer link by alias, or all peers when no arg is given |
 | `telepathy doctor` | Preflight: node version, node-pty availability, default port reachability, browser launcher |

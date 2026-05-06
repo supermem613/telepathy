@@ -14,6 +14,7 @@
 
 import { hostname } from "node:os";
 import { execSync } from "node:child_process";
+import { connect as netConnect } from "node:net";
 import { startWrapper } from "../core/pty-wrapper.js";
 import {
   acceptStart,
@@ -30,6 +31,11 @@ export type HostOptions = AcceptOptions & {
   command?: string;
   args?: string[];
   noListen?: boolean;       // skip listener; just wrap the process locally
+  // Internal: write the join token as `{"token":"TLP1…"}\n` to this pipe
+  // path right after acceptStart resolves, then close. Used by the
+  // spawn-host RPC so a parent host can capture a child host's token
+  // without scraping stdout. End-users don't set this directly.
+  tokenHandoffPipe?: string;
 };
 
 // Find what's holding a TCP port (Windows / Linux / macOS). Best-effort —
@@ -72,10 +78,12 @@ export async function runHost(opts: HostOptions): Promise<void> {
 
   if (!opts.noListen) {
     let expiresInSec: number | undefined;
+    let acceptedToken: string | undefined;
     try {
       const result = await acceptStart(opts);
       printBanner(result);
       expiresInSec = result.expiresInSec;
+      acceptedToken = result.token;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       // EADDRINUSE here means the user passed `-p <port>` explicitly and
@@ -107,6 +115,17 @@ export async function runHost(opts: HostOptions): Promise<void> {
       // story: a hold without a token is useless. Surface the real error.
       process.stderr.write(chalk.red(`telepathy host: failed to bind listener (${msg})\n`));
       process.exit(1);
+    }
+    if (opts.tokenHandoffPipe && acceptedToken) {
+      try {
+        await writeTokenToHandoffPipe(opts.tokenHandoffPipe, acceptedToken);
+      } catch (err) {
+        // Non-fatal: a parent that asked for handoff will time out and
+        // surface its own error. The user still has the printed banner
+        // and can connect manually.
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(chalk.yellow(`telepathy host: token handoff to ${opts.tokenHandoffPipe} failed (${msg}); proceeding without handoff\n`));
+      }
     }
     await holdForFirstPeerOrKeypress({ expiresInSec });
   }
@@ -327,4 +346,34 @@ function printBanner(r: { token: string; addr: string; bindHost: string; expires
     "",
   ];
   process.stderr.write(`${lines.join("\n")}\n`);
+}
+
+// Write `{"token":"TLP1…"}\n` to a host-local IPC pipe and close. Used
+// by the spawn-host RPC: the parent `telepathy host` creates the pipe
+// before launching this child; this child writes one JSON line and
+// disconnects. ~5 s connect budget — the parent should already be
+// listening before we ever ran.
+function writeTokenToHandoffPipe(pipePath: string, token: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const socket = netConnect(pipePath);
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error(`handoff pipe ${pipePath} did not accept a connection within 5s`));
+    }, 5_000);
+    socket.once("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    socket.once("connect", () => {
+      clearTimeout(timer);
+      socket.write(`${JSON.stringify({ token })}\n`, (err) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        socket.end();
+        resolve();
+      });
+    });
+  });
 }

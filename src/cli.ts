@@ -38,6 +38,9 @@ program
   .option("-b, --bind <host>", "Interface to bind to (default: 0.0.0.0 — all interfaces)")
   .option("-a, --advertise <host>", "IP encoded into the join token (default: detected LAN IPv4)")
   .option("--no-listen", "Run the wrapper without binding a peer listener (local-only)")
+  // Hidden internal flag: see HostOptions.tokenHandoffPipe. Used by the
+  // spawn-host RPC; not for end-users.
+  .option("--token-handoff-pipe <path>", "(internal) write the join token to this named pipe / unix socket and continue")
   .allowUnknownOption(true)
   .allowExcessArguments(true)
   .action(async (options) => {
@@ -49,6 +52,7 @@ program
       bind: options.bind,
       advertise: options.advertise,
       noListen: options.listen === false,
+      tokenHandoffPipe: options.tokenHandoffPipe,
     });
   });
 

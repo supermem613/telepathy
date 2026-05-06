@@ -24,6 +24,7 @@ import type {
 import type { Frame } from "./transport.js";
 import { isDebug } from "./debug.js";
 import { buildReplayWithModes } from "./dec-modes.js";
+import { handleSpawnHostRequest } from "./spawn-host.js";
 
 export type LocalPty = {
   state: {
@@ -368,6 +369,23 @@ function handleFrameForPeer(peer: Peer, frame: Message): void {
         }
         listeners.onRemoteResize?.(peer, frame.cols, frame.rows);
       }
+      const pending = peer.pending.get(frame.id);
+      if (pending) {
+        peer.pending.delete(frame.id);
+        clearTimeout(pending.timer);
+        pending.resolve(frame);
+      }
+      return;
+    }
+    case "spawn_host": {
+      // Remote peer asked us to spawn a sibling `telepathy host` here.
+      // Fire-and-forget — handler sends spawn_host_ack itself (success
+      // or failure path). Don't await: we don't want this dispatcher
+      // to block on a 30 s named-pipe wait.
+      void handleSpawnHostRequest(peer, frame.id);
+      return;
+    }
+    case "spawn_host_ack": {
       const pending = peer.pending.get(frame.id);
       if (pending) {
         peer.pending.delete(frame.id);

@@ -111,6 +111,29 @@ export type PtyUnsubscribeMessage = {
   type: "pty_unsubscribe";
 };
 
+// `spawn_host` — request the remote peer to spawn a fresh `telepathy host`
+// process in a new visible OS terminal window on its machine, and return
+// the new host's join token so we can attach a second peer link to the
+// same box. Currently Windows-only on the host side; the protocol itself
+// is platform-neutral and POSIX support can drop in later.
+//
+// Flow: viewer → host (spawn_host) → host runs launcher → child host
+// reports its token via a host-local named pipe → host → viewer
+// (spawn_host_ack {token}). Viewer then pipes the token through its
+// existing /api/connect path.
+export type SpawnHostMessage = {
+  type: "spawn_host";
+  id: string;
+};
+
+export type SpawnHostAckMessage = {
+  type: "spawn_host_ack";
+  id: string;
+  ok: boolean;
+  token?: string;          // TLP1… on success
+  error?: string;          // human-readable failure reason
+};
+
 export type Message =
   | HelloMessage
   | HelloAckMessage
@@ -127,7 +150,9 @@ export type Message =
   | PtyInputMessage
   | PtyResizeMessage
   | PtyInputResizeMessage
-  | PtyUnsubscribeMessage;
+  | PtyUnsubscribeMessage
+  | SpawnHostMessage
+  | SpawnHostAckMessage;
 
 export const PROTOCOL_VERSION = 1;
 export const DEFAULT_PORT = 7423;
