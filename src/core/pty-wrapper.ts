@@ -64,6 +64,11 @@ export type StartWrapperOptions = {
   // Whether to attach the wrapper to the host process's stdin/stdout for
   // user passthrough. Default true (production CLI). Tests pass false.
   attachStdio?: boolean;
+  // Source of the listener's current token, queried on `get_token` IPC
+  // requests from the wrapped shell (used by `telepathy token`). Returns
+  // undefined when there is no listener (e.g. host was started with
+  // --no-listen) — in that case the wrapper replies with `token_error`.
+  getListenerToken?: () => { token: string; addr: string; bindHost: string } | undefined;
 };
 
 export async function startWrapper(opts: StartWrapperOptions): Promise<WrapperState | null> {
@@ -325,6 +330,16 @@ export async function startWrapper(opts: StartWrapperOptions): Promise<WrapperSt
           }
           subscriberSizes.set(socket, { cols: msg.cols, rows: msg.rows });
           recomputeSize();
+        } else if (msg.type === "get_token") {
+          const info = opts.getListenerToken?.();
+          const reply: WrapperToExtension = info
+            ? { type: "token", token: info.token, addr: info.addr, bindHost: info.bindHost }
+            : { type: "token_error", error: "host has no active listener (started with --no-listen?)" };
+          try {
+            sendIpc(socket, reply);
+          } catch {
+            // Socket likely already closed; nothing to do.
+          }
         }
       }, () => {
         subscribers.delete(socket);

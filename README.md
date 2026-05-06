@@ -22,7 +22,7 @@ telepathy host
 #    bound: 0.0.0.0:7423
 #    addr:  192.168.1.69:7423
 #    token: TLP1YCUACRI477YZWUANC5FW66Y
-#    valid: 10 min
+#    valid: until host exits  (run `telepathy token` from the wrapped shell to reprint)
 #    waiting for a peer to connect, or press Enter / Space to start the shell now…
 ```
 
@@ -36,6 +36,15 @@ telepathy connect TLP1YCUACRI477YZWUANC5FW66Y --term   # mirror in this terminal
 
 Box A's shell spawns the moment a peer connects. From the wall: type into the active tab, watch frames stream in real time, double-click a tab label to rename it, click the per-tab ⎘ to spawn a sibling `telepathy host` in a fresh terminal window on that tab's host machine and auto-attach it as a new tab.
 
+Lost the token (terminal scrolled, app closed, want to re-attach)? From **inside the wrapped shell on box A**:
+
+```bash
+telepathy token                               # reprints the current join token
+telepathy token --json                        # machine-readable: {ok, token, addr, bindHost}
+```
+
+The token is valid for as long as the host process keeps running.
+
 ## Commands
 
 | Command | What it does |
@@ -45,6 +54,7 @@ Box A's shell spawns the moment a peer connects. From the wall: type into the ac
 | `telepathy app [tokens...]` | Open the Electron wall viewer; auto-links any tokens passed as args. Each tab has a ⎘ button that asks the tab's host machine to spawn a sibling `telepathy host` in a fresh terminal window and auto-attaches it as a new tab (Windows host only) |
 | `telepathy peers` | List active peer links and the local listener (if any) — `--json` for scripting |
 | `telepathy disconnect [peer]` | Tear down one peer link by alias, or all peers when no arg is given |
+| `telepathy token` | Reprint the current join token. Run from inside a `telepathy host` wrapped shell — `--json` for scripting |
 | `telepathy doctor` | Preflight: node version, node-pty availability, default port reachability, browser launcher |
 | `telepathy install-shortcut` | Windows-only: create a Start-menu shortcut for `telepathy app` you can pin to taskbar (`--uninstall` to remove) |
 | `telepathy update` | Pull the latest commits, `npm install`, and rebuild the local telepathy clone in place |

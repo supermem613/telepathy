@@ -25,8 +25,9 @@ test/
 │   ├── orchestrator.test.ts           # Deferred pty_subscribe, listener merge, dialer disconnect
 │   ├── peers.test.ts                  # Peer registry add/remove/dedup
 │   ├── protocol.test.ts               # Message-type union exhaustiveness
-│   ├── pty-wrapper.test.ts            # node-pty subprocess + IPC stream
+│   ├── pty-wrapper.test.ts            # node-pty subprocess + IPC stream (incl. get_token handler)
 │   ├── token.test.ts                  # Token encode/decode/format
+│   ├── token-cmd.test.ts              # `telepathy token` CLI: success / --json / no env / wrapper errors / timeout
 │   ├── transport.test.ts              # TLS-PSK accept + dial round-trip
 │   └── viewer.test.ts                 # HTTP+WS server: token gate, /api/*, HTML substitution
 ├── integration/                       # Real CLI subprocess + real Electron window

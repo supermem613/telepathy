@@ -18,6 +18,7 @@ import { connect as netConnect } from "node:net";
 import { startWrapper } from "../core/pty-wrapper.js";
 import {
   acceptStart,
+  describePeers,
   setLocalPty,
   type AcceptOptions,
 } from "../core/api.js";
@@ -77,12 +78,10 @@ export async function runHost(opts: HostOptions): Promise<void> {
   };
 
   if (!opts.noListen) {
-    let expiresInSec: number | undefined;
     let acceptedToken: string | undefined;
     try {
       const result = await acceptStart(opts);
       printBanner(result);
-      expiresInSec = result.expiresInSec;
       acceptedToken = result.token;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -127,7 +126,7 @@ export async function runHost(opts: HostOptions): Promise<void> {
         process.stderr.write(chalk.yellow(`telepathy host: token handoff to ${opts.tokenHandoffPipe} failed (${msg}); proceeding without handoff\n`));
       }
     }
-    await holdForFirstPeerOrKeypress({ expiresInSec });
+    await holdForFirstPeerOrKeypress();
   }
 
   const wrapper = await startWrapper({
@@ -136,6 +135,7 @@ export async function runHost(opts: HostOptions): Promise<void> {
     args,
     cwd: process.cwd(),
     env,
+    getListenerToken: () => describePeers().listening,
   });
   if (!wrapper) {
     process.stderr.write(
@@ -228,10 +228,10 @@ export function classifyHoldInput(chunk: Buffer): KeyClass {
   return "ignore";
 }
 
-function holdForFirstPeerOrKeypress(opts: { expiresInSec?: number } = {}): Promise<"peer" | "key" | "expired"> {
+function holdForFirstPeerOrKeypress(): Promise<"peer" | "key"> {
   return new Promise((resolve) => {
     let done = false;
-    const settle = (reason: "peer" | "key" | "expired", message: string): void => {
+    const settle = (reason: "peer" | "key", message: string): void => {
       if (done) {
         return;
       }
@@ -278,17 +278,6 @@ function holdForFirstPeerOrKeypress(opts: { expiresInSec?: number } = {}): Promi
     };
     process.once("SIGINT", onSigint);
 
-    // Token expiry: if the listener's join token TTL elapses while we're
-    // still holding, abort cleanly rather than spawn the shell into a
-    // session no peer can ever reach.
-    let expiryTimer: NodeJS.Timeout | undefined;
-    if (opts.expiresInSec && opts.expiresInSec > 0) {
-      expiryTimer = setTimeout(() => {
-        settle("expired", chalk.yellow(`⏰ token expired (${Math.round(opts.expiresInSec! / 60)} min). Aborting host.`));
-        process.exit(0);
-      }, opts.expiresInSec * 1000);
-    }
-
     const wasRaw = process.stdin.isTTY ? process.stdin.isRaw : false;
     if (process.stdin.isTTY) {
       try {
@@ -312,9 +301,6 @@ function holdForFirstPeerOrKeypress(opts: { expiresInSec?: number } = {}): Promi
       unsubscribePeer();
       process.stdin.off("data", onKey);
       process.off("SIGINT", onSigint);
-      if (expiryTimer) {
-        clearTimeout(expiryTimer);
-      }
       if (process.stdin.isTTY) {
         process.stdin.setRawMode(wasRaw);
       }
@@ -334,14 +320,14 @@ function resolveCommand(opts: HostOptions): { command: string; args: string[] } 
   return { command: sh, args: [] };
 }
 
-function printBanner(r: { token: string; addr: string; bindHost: string; expiresInSec: number }): void {
+function printBanner(r: { token: string; addr: string; bindHost: string }): void {
   const lines = [
     "",
     chalk.cyan("📡 telepathy host ready"),
     `   bound: ${r.bindHost}:${r.addr.split(":")[1]}`,
     `   addr:  ${r.addr}    (encoded into the token below)`,
     `   token: ${chalk.bold(r.token)}`,
-    `   valid: ${Math.round(r.expiresInSec / 60)} min`,
+    `   valid: until host exits  (run \`telepathy token\` from the wrapped shell to reprint)`,
     chalk.dim("   share the token with the other box; they run `telepathy connect <token>`"),
     "",
   ];

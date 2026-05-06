@@ -22,8 +22,6 @@ import {
 } from "./peers.js";
 import { DEFAULT_PORT } from "./protocol.js";
 
-const ACCEPT_TOKEN_TTL_MS = 10 * 60 * 1000;
-
 type AcceptState = {
   server: TlsServer;
   port: number;
@@ -31,7 +29,6 @@ type AcceptState = {
   advertisedHost: string;
   secret: Buffer;
   token: string;
-  expiresAt: number;
 };
 
 let acceptState: AcceptState | undefined;
@@ -46,21 +43,20 @@ export type AcceptResult = {
   token: string;
   addr: string;         // <advertisedHost>:<port>, what peers will dial
   bindHost: string;     // what we actually listen on
-  expiresInSec: number;
 };
 
 export async function acceptStart(opts: AcceptOptions = {}): Promise<AcceptResult> {
-  if (acceptState && acceptState.expiresAt > Date.now()) {
+  // The listener's PSK is generated once at startup and never rotates while
+  // the host process is alive. The original join token therefore remains
+  // valid for the lifetime of the process — there is no TTL. If a listener
+  // already exists, return its token; callers who want a fresh one must
+  // restart the host (see the consider session for the rotation tradeoff).
+  if (acceptState) {
     return {
       token: acceptState.token,
       addr: `${acceptState.advertisedHost}:${acceptState.port}`,
       bindHost: acceptState.bindHost,
-      expiresInSec: Math.round((acceptState.expiresAt - Date.now()) / 1000),
     };
-  }
-  if (acceptState) {
-    acceptState.server.close();
-    acceptState = undefined;
   }
   const advertisedHost = opts.advertise ?? pickLocalIPv4();
   // Bind on all interfaces by default. Advertising a specific IPv4 in the
@@ -110,13 +106,11 @@ export async function acceptStart(opts: AcceptOptions = {}): Promise<AcceptResul
     advertisedHost,
     secret,
     token,
-    expiresAt: Date.now() + ACCEPT_TOKEN_TTL_MS,
   };
   return {
     token,
     addr: `${advertisedHost}:${port}`,
     bindHost,
-    expiresInSec: Math.round(ACCEPT_TOKEN_TTL_MS / 1000),
   };
 }
 
@@ -191,7 +185,6 @@ export type ListenerInfo = {
   token: string;
   addr: string;
   bindHost: string;
-  expiresInSec: number;
 };
 
 export function describePeers(): { peers: PeerInfo[]; listening?: ListenerInfo } {
@@ -208,7 +201,6 @@ export function describePeers(): { peers: PeerInfo[]; listening?: ListenerInfo }
       token: acceptState.token,
       addr: `${acceptState.advertisedHost}:${acceptState.port}`,
       bindHost: acceptState.bindHost,
-      expiresInSec: Math.max(0, Math.round((acceptState.expiresAt - Date.now()) / 1000)),
     }
     : undefined;
   return { peers: out, listening };

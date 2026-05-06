@@ -9,10 +9,13 @@
 //   { type: "resize", cols, rows }     // PTY resized
 //   { type: "exit",  code, signal? }   // child process exited
 //   { type: "hello", cols, rows, replayBase64 }   // sent on first connect
+//   { type: "token", token, addr, bindHost }      // reply to get_token
+//   { type: "token_error", error }                // reply to get_token when no listener
 //
 // Extension → wrapper:
 //   { type: "input",  dataBase64 }     // inject keystrokes into the PTY
 //   { type: "resize", cols, rows }     // request a resize
+//   { type: "get_token" }              // ask for the current join token
 //
 // The pipe path is exposed via the TELEPATHY_SOCKET env var.
 
@@ -26,11 +29,14 @@ export type WrapperToExtension =
   | { type: "hello"; cols: number; rows: number; replayBase64: string }
   | { type: "frame"; dataBase64: string }
   | { type: "resize"; cols: number; rows: number }
-  | { type: "exit"; code: number | null; signal: NodeJS.Signals | null };
+  | { type: "exit"; code: number | null; signal: NodeJS.Signals | null }
+  | { type: "token"; token: string; addr: string; bindHost: string }
+  | { type: "token_error"; error: string };
 
 export type ExtensionToWrapper =
   | { type: "input"; dataBase64: string }
-  | { type: "resize"; cols: number; rows: number };
+  | { type: "resize"; cols: number; rows: number }
+  | { type: "get_token" };
 
 export function buildPipePath(): string {
   // On Windows, named pipes live under \\.\pipe\<name>. On POSIX, use a

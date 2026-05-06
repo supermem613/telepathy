@@ -127,4 +127,19 @@ describe("api.acceptStart / connectPeer round-trip", () => {
       await new Promise<void>((resolve) => squatter.close(() => resolve()));
     }
   });
+
+  it("AcceptResult and ListenerInfo carry no `expiresInSec` field (TTL was removed)", async () => {
+    const port = randomPort();
+    const accept = await acceptStart({ port });
+    try {
+      assert.equal((accept as Record<string, unknown>).expiresInSec, undefined,
+        "AcceptResult must not carry expiresInSec — token is valid for the host process lifetime");
+      const info = describePeers().listening;
+      assert.ok(info, "listener should be advertised");
+      assert.equal((info as Record<string, unknown>).expiresInSec, undefined,
+        "ListenerInfo must not carry expiresInSec");
+    } finally {
+      acceptStop();
+    }
+  });
 });
