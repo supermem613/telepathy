@@ -70,7 +70,10 @@ export function readIpc<T extends WrapperToExtension | ExtensionToWrapper>(
   onMessage: (msg: T) => void,
   onClose?: (err?: Error) => void,
 ): void {
+  // SAFETY: readline.Interface re-emits source-stream errors. If the IPC
+  // socket dies and nobody handles the bubbled 'error', Node crashes.
   const rl = createInterface({ input: socket, crlfDelay: Infinity });
+  rl.on("error", () => undefined);
   rl.on("line", (line) => {
     if (!line) {
       return;

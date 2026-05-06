@@ -101,7 +101,15 @@ function attachFrameReader(socket: TLSSocket, onFrame: FrameHandler): void {
   // Use readline — line-delimited JSON gives us a simple, robust frame
   // boundary without writing our own buffer-splitter. Each frame is a
   // single JSON object on its own line.
+  //
+  // SAFETY: readline.Interface re-emits source-stream errors. If the
+  // underlying TLS socket dies (peer RST, handshake abort, etc.) and we
+  // don't attach a handler here, Node treats it as an unhandled 'error'
+  // event and crashes the process. Swallow it — the socket layer above
+  // already surfaces the error via `onClose`/orchestrator hooks.
   const rl = createInterface({ input: socket, crlfDelay: Infinity });
+  rl.on("error", () => undefined);
+  socket.on("error", () => undefined);
   rl.on("line", (line) => {
     if (line.length === 0) {
       return;

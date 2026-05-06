@@ -396,7 +396,11 @@ function makePeer(p: Omit<Peer, "status" | "connectedAt" | "pending">): Peer {
 import { createInterface } from "node:readline";
 
 function attachReader(socket: TLSSocket, onFrame: (frame: Frame) => void, onClose: () => void): void {
+  // SAFETY: see transport.ts attachFrameReader — readline re-emits its
+  // source-stream errors and Node crashes if nobody handles them. Swallow.
   const rl = createInterface({ input: socket, crlfDelay: Infinity });
+  rl.on("error", () => undefined);
+  socket.on("error", () => undefined);
   rl.on("line", (line) => {
     if (!line) {
       return;

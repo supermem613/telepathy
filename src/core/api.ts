@@ -63,7 +63,11 @@ export async function acceptStart(opts: AcceptOptions = {}): Promise<AcceptResul
   }
   const port = opts.port ?? DEFAULT_PORT;
   const advertisedHost = opts.advertise ?? pickLocalIPv4();
-  const bindHost = opts.bind ?? advertisedHost;
+  // Bind on all interfaces by default. Advertising a specific IPv4 in the
+  // token still tells peers where to dial, but binding to 0.0.0.0 lets
+  // loopback + alternate NICs reach the listener too — which matters for
+  // same-box testing and Windows Firewall edge cases. Override with --bind.
+  const bindHost = opts.bind ?? "0.0.0.0";
   const secret = generateSecret();
   const fallbackAlias = getLocalAlias();
   const server = startListener({
