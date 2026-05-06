@@ -628,9 +628,19 @@
         // settles we explicitly forward the resize to the host (xterm's
         // onResize doesn't always fire if dimensions look unchanged from
         // its perspective even though the host is stuck at a stale size).
+        //
+        // Skip term.focus() if this tab currently has an inline rename
+        // <input> mounted: a dblclick on the label fires two `click`s
+        // first (each calling activate → scheduling this RAF), THEN the
+        // dblclick (which mounts the rename input synchronously). By the
+        // time this RAF runs, the input is in the DOM. Calling
+        // term.focus() here would synchronously blur the rename input,
+        // and the input's blur listener would commit the unchanged
+        // prefill — making rename appear to never open at all.
         requestAnimationFrame(() => {
           try { t.fit.fit(); } catch (_) {}
           try { t.sendResizeNow && t.sendResizeNow(); } catch (_) {}
+          if (t.tab.querySelector("input.rename-input")) { return; }
           try { t.term.focus(); } catch (_) {}
         });
       }
@@ -795,6 +805,10 @@
     if (!activeAlias) return;
     const t = tabs.get(activeAlias);
     if (!t || !t.term) return;
+    // Don't steal focus from an open rename input on this tab — same
+    // reasoning as in activate(): the rename's blur listener would
+    // commit immediately, eating the user's edit.
+    if (t.tab && t.tab.querySelector("input.rename-input")) return;
     try { t.term.focus(); } catch (_) { /* ignore */ }
   }
   window.addEventListener("focus", focusActiveTerm);
