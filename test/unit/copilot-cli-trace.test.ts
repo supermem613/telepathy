@@ -21,6 +21,8 @@ import { dirname, resolve } from "node:path";
 import { trackDecModes, buildReplayWithModes, type DecModeState } from "../../src/core/dec-modes.js";
 
 const FIXTURE = resolve(dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "copilot-cli-trace.bin");
+const ESC = String.fromCharCode(0x1b);
+const SYNC_2026_RE = new RegExp(`${ESC}\\[\\?2026([hl])`, "g");
 
 function loadTrace(): Buffer {
   return readFileSync(FIXTURE);
@@ -64,7 +66,7 @@ describe("copilot-cli real trace fixture", () => {
     // stopped during recording. We check the value matches the last
     // ?2026 seen in the bytes directly.)
     const text = loadTrace().toString("latin1");
-    const all2026 = [...text.matchAll(/\x1b\[\?2026([hl])/g)];
+    const all2026 = [...text.matchAll(SYNC_2026_RE)];
     if (all2026.length > 0) {
       const last = all2026[all2026.length - 1][1];
       assert.equal(sync2026, last === "h",

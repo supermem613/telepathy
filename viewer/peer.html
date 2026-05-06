@@ -27,6 +27,7 @@
 </header>
 <div id="term-host"></div>
 <script src="/static/xterm.js?t={{TOKEN}}"></script>
+<script src="/static/addon-unicode11.js?t={{TOKEN}}"></script>
 <script src="/static/addon-fit.js?t={{TOKEN}}"></script>
 <script>
 (async function () {
@@ -37,9 +38,13 @@
   const term = new window.Terminal({
     fontSize: 16,
     fontFamily: '"CaskaydiaCove Nerd Font", "Cascadia Code NF", "Cascadia Code", "FiraCode Nerd Font", "FiraCode NF", "JetBrainsMono Nerd Font", "JetBrainsMono NF", "Hack Nerd Font", "MesloLGS NF", "Consolas", "Menlo", monospace',
+    allowProposedApi: true,
     cursorBlink: true,
     theme: { background: "#000000", foreground: "#d4d4d4" },
   });
+  const unicode = new window.Unicode11Addon.Unicode11Addon();
+  term.loadAddon(unicode);
+  term.unicode.activeVersion = "11";
   const fit = new window.FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(document.getElementById("term-host"));

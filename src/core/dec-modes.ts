@@ -48,7 +48,9 @@ export function trackDecModes(chunk: Buffer, modes: DecModeState): void {
 }
 
 export function buildModePrelude(modes: DecModeState): Buffer {
-  if (modes.size === 0) return Buffer.alloc(0);
+  if (modes.size === 0) {
+    return Buffer.alloc(0);
+  }
   let text = "";
   for (const [code, set] of modes) {
     text += `\x1b[?${code}${set ? "h" : "l"}`;
@@ -58,6 +60,8 @@ export function buildModePrelude(modes: DecModeState): Buffer {
 
 export function buildReplayWithModes(ringBuffer: Buffer, modes: DecModeState): string {
   const prelude = buildModePrelude(modes);
-  if (prelude.length === 0) return ringBuffer.toString("base64");
+  if (prelude.length === 0) {
+    return ringBuffer.toString("base64");
+  }
   return Buffer.concat([prelude, ringBuffer]).toString("base64");
 }

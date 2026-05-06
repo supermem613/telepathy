@@ -319,6 +319,7 @@ function resolveModuleAsset(sub: string): string | null {
     "xterm.js": "@xterm/xterm/lib/xterm.js",
     "xterm.css": "@xterm/xterm/css/xterm.css",
     "addon-fit.js": "@xterm/addon-fit/lib/addon-fit.js",
+    "addon-unicode11.js": "@xterm/addon-unicode11/lib/addon-unicode11.js",
   };
   const rel = map[sub];
   return rel ? join(root, rel) : null;

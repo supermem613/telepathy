@@ -273,6 +273,7 @@
 <div class="toast" id="toast"></div>
 
 <script src="/static/xterm.js?t={{TOKEN}}"></script>
+<script src="/static/addon-unicode11.js?t={{TOKEN}}"></script>
 <script src="/static/addon-fit.js?t={{TOKEN}}"></script>
 <script>
 (async function () {
@@ -435,6 +436,7 @@
       term = new window.Terminal({
         fontSize: 16,
         fontFamily: '"CaskaydiaCove Nerd Font", "Cascadia Code NF", "Cascadia Code", "FiraCode Nerd Font", "FiraCode NF", "JetBrainsMono Nerd Font", "JetBrainsMono NF", "Hack Nerd Font", "MesloLGS NF", "Consolas", "Menlo", monospace',
+        allowProposedApi: true,
         cursorBlink: true,
         // Don't gate stdin on hasPty: even peers without PTY mirroring
         // benefit from a focused, navigable terminal (selection, copy,
@@ -442,6 +444,9 @@
         // typing into a no-PTY peer just no-ops on the wire.
         theme: { background: "#000000", foreground: "#d4d4d4" },
       });
+      const unicode = new window.Unicode11Addon.Unicode11Addon();
+      term.loadAddon(unicode);
+      term.unicode.activeVersion = "11";
       fit = new window.FitAddon.FitAddon();
       term.loadAddon(fit);
       term.open(termHost);
@@ -667,7 +672,7 @@
     for (const peer of r.peers) {
       if (!tabs.has(peer.alias)) {
         const entry = createTab(peer);
-        if (!activeAlias) {
+        if (entry && !activeAlias) {
           activate(peer.alias);
         }
       }

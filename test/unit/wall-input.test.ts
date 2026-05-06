@@ -15,7 +15,6 @@
 // no browser. It runs in a few seconds.
 
 import { describe, it, after } from "node:test";
-import { strict as assert } from "node:assert";
 import { startWrapper } from "../../src/core/pty-wrapper.js";
 import { connectIpcClient, sendIpc, readIpc, buildPipePath, type WrapperToExtension, type ExtensionToWrapper } from "../../src/core/ipc.js";
 import { resolve, dirname } from "node:path";
@@ -40,13 +39,19 @@ let collected = "";
 const subs: Array<(text: string) => void> = [];
 
 after(() => {
-  try { stop?.(); } catch { /* ignore */ }
-  try { socket?.destroy(); } catch { /* ignore */ }
+  try {
+    stop?.();
+  } catch { /* ignore */ }
+  try {
+    socket?.destroy();
+  } catch { /* ignore */ }
   setTimeout(() => process.exit(0), 300).unref();
 });
 
 async function ensureWrapper(): Promise<void> {
-  if (socket) return;
+  if (socket) {
+    return;
+  }
   const pipePath = buildPipePath();
   const wrapper = await startWrapper({
     pipePath,
@@ -57,20 +62,26 @@ async function ensureWrapper(): Promise<void> {
     attachStdio: false,
     onChildExit: () => undefined,
   });
-  if (!wrapper) throw new Error("startWrapper returned null (node-pty unavailable)");
+  if (!wrapper) {
+    throw new Error("startWrapper returned null (node-pty unavailable)");
+  }
   stop = () => wrapper.server.close();
   await new Promise((r) => setTimeout(r, 100));
   socket = await connectIpcClient(pipePath);
   readIpc<WrapperToExtension>(socket, (msg) => {
     if (msg.type === "frame") {
       collected += Buffer.from(msg.dataBase64, "base64").toString("utf8");
-      for (const fn of subs) fn(collected);
+      for (const fn of subs) {
+        fn(collected);
+      }
     } else if (msg.type === "hello") {
       // The hello carries the replay buffer (with mode prelude). Apply
       // it the same way a real subscriber would so the bot's READY
       // banner is in `collected` from the start.
       collected += Buffer.from(msg.replayBase64, "base64").toString("utf8");
-      for (const fn of subs) fn(collected);
+      for (const fn of subs) {
+        fn(collected);
+      }
     }
   });
   await waitFor(() => collected.includes("RAW_ECHO_READY"), 5000, "RAW_ECHO_READY");
@@ -85,8 +96,14 @@ function send(bytes: Buffer | string): void {
 async function waitFor(predicate: () => boolean, timeoutMs: number, what: string): Promise<void> {
   const giveUp = Date.now() + timeoutMs;
   let resolveFn!: () => void;
-  const done = new Promise<void>((r) => { resolveFn = r; });
-  const checker = () => { if (predicate()) resolveFn(); };
+  const done = new Promise<void>((r) => {
+    resolveFn = r;
+  });
+  const checker = () => {
+    if (predicate()) {
+      resolveFn();
+    }
+  };
   subs.push(checker);
   checker();
   // Also poll, in case no frames arrive but stale state already matches.
@@ -100,7 +117,9 @@ async function waitFor(predicate: () => boolean, timeoutMs: number, what: string
   } finally {
     clearInterval(pollTimer);
     const i = subs.indexOf(checker);
-    if (i >= 0) subs.splice(i, 1);
+    if (i >= 0) {
+      subs.splice(i, 1);
+    }
   }
 }
 
@@ -125,16 +144,28 @@ function stripRxLines(text: string): string {
   return [...text.matchAll(/RX:([0-9a-f]*)/g)].map((m) => m[1]).join("");
 }
 
+function skipIfNoPty(t: { skip: (reason?: string) => void }): boolean {
+  if (ptyAvailable) {
+    return false;
+  }
+  t.skip("node-pty not available");
+  return true;
+}
+
 describe("wall input → PTY child round-trip (wrapper IPC)", () => {
   it("plain ASCII text reaches the child as raw bytes", async (t) => {
-    if (!ptyAvailable) { t.skip("node-pty not available"); return; }
+    if (skipIfNoPty(t)) {
+      return;
+    }
     await ensureWrapper();
     send("hello");
     await assertReceived("hello", "ASCII");
   });
 
   it("Ctrl-C (0x03) reaches the child as raw byte (NOT a host signal)", async (t) => {
-    if (!ptyAvailable) { t.skip("node-pty not available"); return; }
+    if (skipIfNoPty(t)) {
+      return;
+    }
     await ensureWrapper();
     // Bot is in raw mode — line discipline OFF, so 0x03 doesn't
     // generate SIGINT. The byte arrives intact, proving the wire path
@@ -146,14 +177,18 @@ describe("wall input → PTY child round-trip (wrapper IPC)", () => {
   });
 
   it("UTF-8 multi-byte characters survive the wire (powerline glyphs, emoji)", async (t) => {
-    if (!ptyAvailable) { t.skip("node-pty not available"); return; }
+    if (skipIfNoPty(t)) {
+      return;
+    }
     await ensureWrapper();
     send("café-🚀");
     await assertReceived("café-🚀", "UTF-8");
   });
 
   it("bracketed-paste sequence is forwarded byte-for-byte", async (t) => {
-    if (!ptyAvailable) { t.skip("node-pty not available"); return; }
+    if (skipIfNoPty(t)) {
+      return;
+    }
     await ensureWrapper();
     // Real xterm bracketed-paste: \x1b[200~ + content + \x1b[201~
     const paste = "\x1b[200~TLP1ABC123\x1b[201~";
@@ -162,7 +197,9 @@ describe("wall input → PTY child round-trip (wrapper IPC)", () => {
   });
 
   it("arrow keys forward as CSI sequences (xterm idiom)", async (t) => {
-    if (!ptyAvailable) { t.skip("node-pty not available"); return; }
+    if (skipIfNoPty(t)) {
+      return;
+    }
     await ensureWrapper();
     send("\x1b[A"); // Up arrow
     await assertReceived("\x1b[A", "Up arrow ESC[A");
@@ -171,7 +208,9 @@ describe("wall input → PTY child round-trip (wrapper IPC)", () => {
   });
 
   it("function keys forward as their CSI/SS3 sequences", async (t) => {
-    if (!ptyAvailable) { t.skip("node-pty not available"); return; }
+    if (skipIfNoPty(t)) {
+      return;
+    }
     await ensureWrapper();
     send("\x1bOP");   // F1 (SS3)
     await assertReceived("\x1bOP", "F1 SS3");
@@ -180,7 +219,9 @@ describe("wall input → PTY child round-trip (wrapper IPC)", () => {
   });
 
   it("Ctrl-V byte (0x16) is delivered as raw input (xterm-side paste handling is upstream)", async (t) => {
-    if (!ptyAvailable) { t.skip("node-pty not available"); return; }
+    if (skipIfNoPty(t)) {
+      return;
+    }
     await ensureWrapper();
     // Browsers handle Ctrl-V at the xterm layer — xterm fires its
     // own `paste` event and writes clipboard contents as bracketed
@@ -190,22 +231,30 @@ describe("wall input → PTY child round-trip (wrapper IPC)", () => {
   });
 
   it("Ctrl-D (0x04) passes through (TUIs may bind it; raw-echo only exits on 0x05)", async (t) => {
-    if (!ptyAvailable) { t.skip("node-pty not available"); return; }
+    if (skipIfNoPty(t)) {
+      return;
+    }
     await ensureWrapper();
     send(Buffer.from([0x04]));
     await assertReceived(Buffer.from([0x04]), "Ctrl-D byte");
   });
 
   it("rapid-fire 1-byte writes all arrive (no input dropped under burst)", async (t) => {
-    if (!ptyAvailable) { t.skip("node-pty not available"); return; }
+    if (skipIfNoPty(t)) {
+      return;
+    }
     await ensureWrapper();
     const chars = "rapidfire-X1234567890";
-    for (const ch of chars) send(ch);
+    for (const ch of chars) {
+      send(ch);
+    }
     await assertReceived(chars, "20-char rapid burst");
   });
 
   it("a paste-sized chunk (1KB) is delivered intact", async (t) => {
-    if (!ptyAvailable) { t.skip("node-pty not available"); return; }
+    if (skipIfNoPty(t)) {
+      return;
+    }
     await ensureWrapper();
     // 1KB is a realistic single-paste size (long token, code snippet,
     // a wall-of-text URL). Larger pastes (>4KB) get chunked by xterm
@@ -218,14 +267,18 @@ describe("wall input → PTY child round-trip (wrapper IPC)", () => {
   });
 
   it("Enter (CR) and LF both pass through as raw bytes", async (t) => {
-    if (!ptyAvailable) { t.skip("node-pty not available"); return; }
+    if (skipIfNoPty(t)) {
+      return;
+    }
     await ensureWrapper();
     send(Buffer.from([0x0d, 0x0a]));
     await assertReceived(Buffer.from([0x0d, 0x0a]), "CR + LF");
   });
 
   it("ESC by itself (used by Vim, menu cancel, etc.) passes through", async (t) => {
-    if (!ptyAvailable) { t.skip("node-pty not available"); return; }
+    if (skipIfNoPty(t)) {
+      return;
+    }
     await ensureWrapper();
     send(Buffer.from([0x1b]));
     await assertReceived(Buffer.from([0x1b]), "bare ESC");

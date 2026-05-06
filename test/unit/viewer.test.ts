@@ -94,7 +94,10 @@ describe("viewer HTTP server", () => {
       assert.equal(r.body.includes("{{TOKEN}}"), false, "wall.html still contains literal {{TOKEN}} placeholder");
       assert.match(r.body, new RegExp(`/static/xterm\\.js\\?t=${tk}`));
       assert.match(r.body, new RegExp(`/static/xterm\\.css\\?t=${tk}`));
+      assert.match(r.body, new RegExp(`/static/addon-unicode11\\.js\\?t=${tk}`));
       assert.match(r.body, new RegExp(`/static/addon-fit\\.js\\?t=${tk}`));
+      assert.match(r.body, /allowProposedApi: true/);
+      assert.match(r.body, /term\.unicode\.activeVersion = "11"/);
     } finally {
       stopViewer();
     }
@@ -108,6 +111,9 @@ describe("viewer HTTP server", () => {
       assert.equal(r.status, 200);
       assert.equal(r.body.includes("{{TOKEN}}"), false);
       assert.match(r.body, new RegExp(`/static/xterm\\.js\\?t=${tk}`));
+      assert.match(r.body, new RegExp(`/static/addon-unicode11\\.js\\?t=${tk}`));
+      assert.match(r.body, /allowProposedApi: true/);
+      assert.match(r.body, /term\.unicode\.activeVersion = "11"/);
     } finally {
       stopViewer();
     }
