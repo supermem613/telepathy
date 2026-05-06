@@ -260,7 +260,7 @@
     <label for="token-input">Join token (TLP1…)</label>
     <div class="token-row">
       <input id="token-input" placeholder="TLP1AAAAABBBBBCCCCCDDDDDEEEEE" autocomplete="off" spellcheck="false" />
-      <button id="paste-btn" class="paste-btn" type="button" title="Paste from clipboard">Paste</button>
+      <button id="paste-btn" class="paste-btn" type="button" title="Paste from clipboard and connect">Paste and Go</button>
     </div>
     <div class="err" id="modal-err"></div>
     <div class="row">
@@ -361,13 +361,14 @@
   $("paste-btn").addEventListener("click", async () => {
     // navigator.clipboard.readText() works inside Electron renderers
     // without extra perms (default policy), and on https/localhost in
-    // browsers. We focus the input first so the user can immediately
-    // edit if needed, then trigger the connect flow on Enter.
+    // browsers. Paste-and-Go: fill the input, then immediately trigger
+    // the connect flow so the user doesn't need a second click.
     try {
       const text = await navigator.clipboard.readText();
       tokenInput.value = (text || "").trim();
       tokenInput.focus();
       modalErr.textContent = "";
+      await onModalOk();
     } catch (err) {
       modalErr.textContent = "Paste failed: " + (err.message || err) + " — paste manually.";
     }
