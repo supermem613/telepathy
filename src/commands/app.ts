@@ -43,16 +43,29 @@ export async function runApp(opts: AppOptions): Promise<void> {
   }
   process.stderr.write(`${chalk.green("🛰  wall:")} ${url}\n`);
   const main = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "electron", "main.cjs");
-  // Spawn electron.exe directly (no .cmd shim) so we can avoid shell:true
-  // — which on Windows + detached creates a visible cmd.exe console window.
-  // windowsHide:true belt-and-suspenders for the case where the shim
-  // fallback is in use (existsSync miss on the dist/electron.exe path).
-  spawn(electron.bin, [main, `--url=${url}`], {
+  const child = spawn(electron.bin, [main, `--url=${url}`], {
     cwd: electron.cwd,
-    detached: true,
-    stdio: "ignore",
+    stdio: ["ignore", "ignore", "pipe"],
     windowsHide: true,
-  }).unref();
+  });
+  child.stderr?.on("data", (chunk: Buffer) => {
+    const text = chunk.toString("utf8");
+    const meaningful = text.split(/\r?\n/).filter((l) => {
+      if (!l.trim()) {
+        return false;
+      }
+      if (/cache_util_win|disk_cache|gpu_disk_cache|gpu\\ipc|registration_protocol_win/.test(l)) {
+        return false;
+      }
+      return true;
+    });
+    if (meaningful.length > 0) {
+      process.stderr.write(chalk.dim("[electron] ") + meaningful.join("\n") + "\n");
+    }
+  });
+  child.on("error", (err) => {
+    process.stderr.write(chalk.red(`[electron] failed to launch: ${err.message}\n`));
+  });
   process.stderr.write(chalk.dim("   window: Electron\n"));
   process.stderr.write(chalk.dim("   Press Ctrl-C to stop the wall server.\n"));
   await new Promise<never>((_, reject) => {

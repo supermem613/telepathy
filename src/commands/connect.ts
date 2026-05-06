@@ -49,12 +49,29 @@ export async function runConnect(opts: ConnectCommandOptions): Promise<void> {
   process.stderr.write(`${chalk.green("🖥  viewer:")} ${url}\n`);
   process.stderr.write(chalk.dim("   Press Ctrl-C to disconnect.\n"));
   const main = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "electron", "main.cjs");
-  spawn(electron.bin, [main, `--url=${url}`], {
+  const child = spawn(electron.bin, [main, `--url=${url}`], {
     cwd: electron.cwd,
-    detached: true,
-    stdio: "ignore",
+    stdio: ["ignore", "ignore", "pipe"],
     windowsHide: true,
-  }).unref();
+  });
+  child.stderr?.on("data", (chunk: Buffer) => {
+    const text = chunk.toString("utf8");
+    const meaningful = text.split(/\r?\n/).filter((l) => {
+      if (!l.trim()) {
+        return false;
+      }
+      if (/cache_util_win|disk_cache|gpu_disk_cache|gpu\\ipc|registration_protocol_win/.test(l)) {
+        return false;
+      }
+      return true;
+    });
+    if (meaningful.length > 0) {
+      process.stderr.write(chalk.dim("[electron] ") + meaningful.join("\n") + "\n");
+    }
+  });
+  child.on("error", (err) => {
+    process.stderr.write(chalk.red(`[electron] failed to launch: ${err.message}\n`));
+  });
   addOrchestratorEvents({
     onPeerDisconnected: (peer, reason) => {
       process.stderr.write(`\n${chalk.dim(`(remote ${peer.alias} disconnected${reason ? `: ${reason}` : ""})`)}\n`);
