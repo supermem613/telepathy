@@ -22,15 +22,27 @@ if (allFiles.length === 0) {
   process.exit(1);
 }
 
-const sandboxHome = process.env.TELEPATHY_TEST_REAL_HOME
+// Integration tests opt out of the HOME sandbox: they spawn long-lived
+// children (Electron, ConPTY-wrapped subprocesses) whose own user-data
+// paths depend on the real USERPROFILE/HOME. With sandboxed HOME these
+// children hang or crash trying to write to non-existent directories
+// (Electron in particular hits a deadlock waiting on its userData dir
+// to materialize relative to the sandboxed USERPROFILE). We make the
+// decision per file so `npm test` (which runs both unit and integration)
+// works correctly: each file's env is built individually based on whether
+// its path includes "integration".
+const sharedSandboxHome = process.env.TELEPATHY_TEST_REAL_HOME
   ? null
   : mkdtempSync(join(tmpdir(), "telepathy-test-home-"));
 
-const env = { ...process.env };
-if (sandboxHome) {
-  env.HOME = sandboxHome;
-  env.USERPROFILE = sandboxHome;
-  env.LOCALAPPDATA = join(sandboxHome, "AppData", "Local");
+function envForFile(filePath) {
+  const env = { ...process.env };
+  if (sharedSandboxHome && !filePath.includes("integration")) {
+    env.HOME = sharedSandboxHome;
+    env.USERPROFILE = sharedSandboxHome;
+    env.LOCALAPPDATA = join(sharedSandboxHome, "AppData", "Local");
+  }
+  return env;
 }
 
 let exitCode = 0;
@@ -44,7 +56,7 @@ try {
     let stdout = "";
     let fileFailed = false;
     try {
-      stdout = execSync(cmd, { env, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
+      stdout = execSync(cmd, { env: envForFile(file), encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
     } catch (err) {
       fileFailed = true;
       stdout = (err.stdout ?? "").toString();
@@ -67,8 +79,8 @@ try {
     exitCode = 1;
   }
 } finally {
-  if (sandboxHome) {
-    rmSync(sandboxHome, { recursive: true, force: true });
+  if (sharedSandboxHome) {
+    rmSync(sharedSandboxHome, { recursive: true, force: true });
   }
 }
 process.exit(exitCode);

@@ -327,13 +327,18 @@
       ws.onclose = () => {
         tab.classList.remove("live", "busy"); tab.classList.add("offline");
       };
-      if (peer.hasPty) {
-        term.onData((data) => {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: "input", data }));
-          }
-        });
-      }
+      // Always wire input. The server-side orchestrator already drops
+      // pty_input frames when no local PTY exists, so this is safe even
+      // for peers whose hasPty was reported false (e.g. when the wall
+      // tab was created DURING the host's hold-for-keypress phase, before
+      // setLocalPty had fired). Once the host's shell spawns, frames
+      // start arriving AND keystrokes start flowing — no need to detect
+      // the capability flip on the client.
+      term.onData((data) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "input", data }));
+        }
+      });
       tabs.set(peer.alias, entry);
       return entry;
     } catch (err) {
