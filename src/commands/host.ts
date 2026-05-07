@@ -26,6 +26,7 @@ import { onFirstPeerConnect } from "../core/orchestrator.js";
 import { attachToWrapperIfPresent } from "./host-pty-shim.js";
 import { buildPipePath } from "../core/ipc.js";
 import { isDebug } from "../core/debug.js";
+import { detectParentShell } from "../core/shell.js";
 import chalk from "chalk";
 
 export type HostOptions = AcceptOptions & {
@@ -333,11 +334,7 @@ function resolveCommand(opts: HostOptions): { command: string; args: string[] } 
   if (opts.command) {
     return { command: opts.command, args: opts.args ?? [] };
   }
-  if (process.platform === "win32") {
-    return { command: process.env.COMSPEC ?? "pwsh.exe", args: [] };
-  }
-  const sh = process.env.SHELL ?? "/bin/bash";
-  return { command: sh, args: [] };
+  return { command: detectParentShell(), args: [] };
 }
 
 function printBanner(r: { token: string; addr: string; bindHost: string; expiresInSec: number }): void {

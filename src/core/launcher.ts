@@ -16,6 +16,7 @@ import { existsSync } from "node:fs";
 
 export type LaunchOptions = {
   pipePath: string;          // named-pipe path the child will write its token to
+  shell?: string;            // shell to spawn in the child host (passed via `--`)
 };
 
 export function openHostInTerminal(opts: LaunchOptions): void {
@@ -44,7 +45,7 @@ export function openHostInTerminal(opts: LaunchOptions): void {
   //   (false) — we WANT the window visible.
   const child = spawn(
     "cmd.exe",
-    buildWindowsStartArgs(cliPath, opts.pipePath),
+    buildWindowsStartArgs(cliPath, opts.pipePath, opts.shell),
     {
       detached: true,
       stdio: "ignore",
@@ -54,8 +55,8 @@ export function openHostInTerminal(opts: LaunchOptions): void {
   child.unref();
 }
 
-export function buildWindowsStartArgs(cliPath: string, pipePath: string): string[] {
-  return [
+export function buildWindowsStartArgs(cliPath: string, pipePath: string, shell?: string): string[] {
+  const args = [
     "/c",
     "start",
     "telepathy host",
@@ -66,4 +67,10 @@ export function buildWindowsStartArgs(cliPath: string, pipePath: string): string
     "--token-handoff-pipe",
     pipePath,
   ];
+  // Pass the parent's shell to the child so it spawns the same shell,
+  // even though the child's own parent process will be cmd.exe.
+  if (shell) {
+    args.push("--", shell);
+  }
+  return args;
 }

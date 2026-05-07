@@ -25,6 +25,7 @@ import { createInterface } from "node:readline";
 import { buildPipePath } from "./ipc.js";
 import { send as sendFrame } from "./transport.js";
 import { openHostInTerminal } from "./launcher.js";
+import { detectParentShell } from "./shell.js";
 import type { Peer } from "./peers.js";
 import { isDebug } from "./debug.js";
 
@@ -131,7 +132,7 @@ export async function handleSpawnHostRequest(peer: Peer, id: string): Promise<vo
 
   let token: string;
   try {
-    openHostInTerminal({ pipePath });
+    openHostInTerminal({ pipePath, shell: detectParentShell() });
     token = await promise;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
