@@ -18,7 +18,7 @@ import { connect as netConnect } from "node:net";
 import { startWrapper } from "../core/pty-wrapper.js";
 import {
   acceptStart,
-  describePeers,
+  rotateListenerSecret,
   setLocalPty,
   type AcceptOptions,
 } from "../core/api.js";
@@ -38,6 +38,8 @@ export type HostOptions = AcceptOptions & {
   // without scraping stdout. End-users don't set this directly.
   tokenHandoffPipe?: string;
 };
+
+const REPAIR_TOKEN_TTL_MS = 60 * 1000;
 
 // Find what's holding a TCP port (Windows / Linux / macOS). Best-effort —
 // returns a human-readable string like "node.exe (pid 12345)" or undefined
@@ -79,10 +81,12 @@ export async function runHost(opts: HostOptions): Promise<void> {
 
   if (!opts.noListen) {
     let acceptedToken: string | undefined;
+    let expiresInSec: number | undefined;
     try {
       const result = await acceptStart(opts);
       printBanner(result);
       acceptedToken = result.token;
+      expiresInSec = result.expiresInSec;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       // EADDRINUSE here means the user passed `-p <port>` explicitly and
@@ -126,7 +130,7 @@ export async function runHost(opts: HostOptions): Promise<void> {
         process.stderr.write(chalk.yellow(`telepathy host: token handoff to ${opts.tokenHandoffPipe} failed (${msg}); proceeding without handoff\n`));
       }
     }
-    await holdForFirstPeerOrKeypress();
+    await holdForFirstPeerOrKeypress({ expiresInSec });
   }
 
   const wrapper = await startWrapper({
@@ -135,7 +139,7 @@ export async function runHost(opts: HostOptions): Promise<void> {
     args,
     cwd: process.cwd(),
     env,
-    getListenerToken: () => describePeers().listening,
+    onReconnectRequest: () => formatRePairBanner(rotateListenerSecret({ ttlMs: REPAIR_TOKEN_TTL_MS })),
   });
   if (!wrapper) {
     process.stderr.write(
@@ -228,10 +232,10 @@ export function classifyHoldInput(chunk: Buffer): KeyClass {
   return "ignore";
 }
 
-function holdForFirstPeerOrKeypress(): Promise<"peer" | "key"> {
+function holdForFirstPeerOrKeypress(opts: { expiresInSec?: number } = {}): Promise<"peer" | "key" | "expired"> {
   return new Promise((resolve) => {
     let done = false;
-    const settle = (reason: "peer" | "key", message: string): void => {
+    const settle = (reason: "peer" | "key" | "expired", message: string): void => {
       if (done) {
         return;
       }
@@ -278,6 +282,19 @@ function holdForFirstPeerOrKeypress(): Promise<"peer" | "key"> {
     };
     process.once("SIGINT", onSigint);
 
+    // Token expiry: if the listener's join token TTL elapses while we're
+    // still holding (no peer connected yet), abort cleanly rather than
+    // spawn the shell into a session no peer can ever reach. After this
+    // point the listener's pskCallback would reject any new dial anyway
+    // (see api.ts ACCEPT_TOKEN_TTL_MS / transport.ts getExpiresAt gate).
+    let expiryTimer: NodeJS.Timeout | undefined;
+    if (opts.expiresInSec && opts.expiresInSec > 0) {
+      expiryTimer = setTimeout(() => {
+        settle("expired", chalk.yellow(`⏰ token expired (${Math.round(opts.expiresInSec! / 60)} min). Aborting host.`));
+        process.exit(0);
+      }, opts.expiresInSec * 1000);
+    }
+
     const wasRaw = process.stdin.isTTY ? process.stdin.isRaw : false;
     if (process.stdin.isTTY) {
       try {
@@ -301,6 +318,9 @@ function holdForFirstPeerOrKeypress(): Promise<"peer" | "key"> {
       unsubscribePeer();
       process.stdin.off("data", onKey);
       process.off("SIGINT", onSigint);
+      if (expiryTimer) {
+        clearTimeout(expiryTimer);
+      }
       if (process.stdin.isTTY) {
         process.stdin.setRawMode(wasRaw);
       }
@@ -320,18 +340,30 @@ function resolveCommand(opts: HostOptions): { command: string; args: string[] } 
   return { command: sh, args: [] };
 }
 
-function printBanner(r: { token: string; addr: string; bindHost: string }): void {
+function printBanner(r: { token: string; addr: string; bindHost: string; expiresInSec: number }): void {
   const lines = [
     "",
     chalk.cyan("📡 telepathy host ready"),
     `   bound: ${r.bindHost}:${r.addr.split(":")[1]}`,
     `   addr:  ${r.addr}    (encoded into the token below)`,
     `   token: ${chalk.bold(r.token)}`,
-    `   valid: until host exits  (run \`telepathy token\` from the wrapped shell to reprint)`,
+    `   valid: ${Math.round(r.expiresInSec / 60)} min, single-use`,
     chalk.dim("   share the token with the other box; they run `telepathy connect <token>`"),
+    chalk.dim("   if the app disconnects later, type `telepathy reconnect` here to re-pair"),
     "",
   ];
   process.stderr.write(`${lines.join("\n")}\n`);
+}
+
+function formatRePairBanner(r: { token: string; addr: string; bindHost: string; expiresInSec: number }): string {
+  return [
+    chalk.cyan("📡 telepathy re-pair token"),
+    `   bound: ${r.bindHost}`,
+    `   addr:  ${r.addr}`,
+    `   token: ${chalk.bold(r.token)}`,
+    `   valid: ${r.expiresInSec} sec, single-use`,
+    chalk.dim("   share with the box that needs to reconnect; they run `telepathy app <token>` or `telepathy connect <token>`"),
+  ].join("\n");
 }
 
 // Write `{"token":"TLP1…"}\n` to a host-local IPC pipe and close. Used

@@ -14,7 +14,7 @@ export function runPeers(opts: PeersOptions): void {
     return;
   }
   if (r.listening) {
-    process.stdout.write(`${chalk.cyan("📡 listening")}  bound=${r.listening.bindHost} addr=${r.listening.addr}\n`);
+    process.stdout.write(`${chalk.cyan("📡 listening")}  bound=${r.listening.bindHost} addr=${r.listening.addr} (token valid ${Math.round(r.listening.expiresInSec / 60)} min)\n`);
     process.stdout.write(`   token: ${chalk.bold(r.listening.token)}\n`);
   }
   if (r.peers.length === 0) {

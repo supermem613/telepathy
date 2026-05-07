@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { startWrapper } from "../../src/core/pty-wrapper.js";
-import { connectIpcClient, readIpc, sendIpc, type WrapperToExtension } from "../../src/core/ipc.js";
+import { observeReconnectInput, startWrapper, type ReconnectInputState } from "../../src/core/pty-wrapper.js";
+import { connectIpcClient, readIpc, type WrapperToExtension } from "../../src/core/ipc.js";
 import { buildPipePath } from "../../src/core/ipc.js";
 
 let ptyAvailable = true;
@@ -10,6 +10,30 @@ try {
 } catch {
   ptyAvailable = false;
 }
+
+describe("pty-wrapper reconnect input observer", () => {
+  it("detects the local typed reconnect command on Enter", () => {
+    const state: ReconnectInputState = { line: "" };
+    assert.equal(observeReconnectInput(state, Buffer.from("telepathy reconnect\r", "utf8")), 1);
+    assert.equal(state.line, "");
+  });
+
+  it("accepts the explicit owner-console prefix variant", () => {
+    const state: ReconnectInputState = { line: "" };
+    assert.equal(observeReconnectInput(state, Buffer.from(":telepathy reconnect\n", "utf8")), 1);
+  });
+
+  it("does not trigger on output-like text or remote command arguments", () => {
+    const state: ReconnectInputState = { line: "" };
+    assert.equal(observeReconnectInput(state, Buffer.from("echo telepathy reconnect\r", "utf8")), 0);
+    assert.equal(observeReconnectInput(state, Buffer.from("telepathy reconnect --json\r", "utf8")), 0);
+  });
+
+  it("supports simple backspace while observing local input", () => {
+    const state: ReconnectInputState = { line: "" };
+    assert.equal(observeReconnectInput(state, Buffer.from("telepathy reconnectx\x7f\r", "utf8")), 1);
+  });
+});
 
 describe("pty-wrapper IPC end-to-end", () => {
   it("sends hello with cols/rows on connect, then streams frames", async (t) => {
@@ -73,117 +97,6 @@ describe("pty-wrapper IPC end-to-end", () => {
     sock.destroy();
     await Promise.race([exitSeen, new Promise<void>((r) => setTimeout(r, 3000).unref())]);
     assert.equal(exitCode, 0, `child should exit with 0, got ${exitCode}`);
-  });
-
-  it("answers get_token with `token` reply when getListenerToken is wired", async (t) => {
-    if (!ptyAvailable) {
-      t.skip("node-pty not available");
-      return;
-    }
-    const localPipe = buildPipePath();
-    const fakeInfo = { token: "TLP1FAKEXYZ", addr: "10.0.0.1:7423", bindHost: "0.0.0.0" };
-    let exitedResolve: () => void;
-    const exited = new Promise<void>((r) => {
-      exitedResolve = r;
-    });
-    const wrapper = await startWrapper({
-      pipePath: localPipe,
-      command: process.execPath,
-      // Idle Node that will exit when stdin closes; we sock.destroy + the
-      // child exits naturally when the IPC pipe closes (well, indirectly:
-      // we kill it via the timeout below). Keep it short.
-      args: ["-e", "setTimeout(()=>{},5000)"],
-      cwd: process.cwd(),
-      env: process.env as Record<string, string | undefined>,
-      attachStdio: false,
-      getListenerToken: () => fakeInfo,
-      onChildExit: () => exitedResolve(),
-    });
-    assert.ok(wrapper, "wrapper should start with node-pty available");
-    try {
-      await new Promise((r) => setTimeout(r, 50));
-      const sock = await connectIpcClient(localPipe);
-      const replies: WrapperToExtension[] = [];
-      let tokenResolve: () => void;
-      const sawToken = new Promise<void>((r) => {
-        tokenResolve = r;
-      });
-      readIpc<WrapperToExtension>(sock, (msg) => {
-        replies.push(msg);
-        if (msg.type === "token" || msg.type === "token_error") {
-          tokenResolve();
-        }
-      });
-      sendIpc(sock, { type: "get_token" });
-      await Promise.race([sawToken, new Promise((_, j) => setTimeout(() => j(new Error("token reply timeout")), 3000))]);
-      const reply = replies.find((m) => m.type === "token" || m.type === "token_error");
-      assert.ok(reply, "should have received a token reply");
-      assert.equal(reply!.type, "token", `expected token, got ${reply!.type}`);
-      const t2 = reply as Extract<WrapperToExtension, { type: "token" }>;
-      assert.equal(t2.token, fakeInfo.token);
-      assert.equal(t2.addr, fakeInfo.addr);
-      assert.equal(t2.bindHost, fakeInfo.bindHost);
-      sock.destroy();
-    } finally {
-      try {
-        wrapper!.pty.kill();
-      } catch { /* ignore */ }
-      try {
-        wrapper!.server.close();
-      } catch { /* ignore */ }
-      await Promise.race([exited, new Promise<void>((r) => setTimeout(r, 2000).unref())]);
-    }
-  });
-
-  it("answers get_token with `token_error` when getListenerToken is absent", async (t) => {
-    if (!ptyAvailable) {
-      t.skip("node-pty not available");
-      return;
-    }
-    const localPipe = buildPipePath();
-    let exitedResolve: () => void;
-    const exited = new Promise<void>((r) => {
-      exitedResolve = r;
-    });
-    const wrapper = await startWrapper({
-      pipePath: localPipe,
-      command: process.execPath,
-      args: ["-e", "setTimeout(()=>{},5000)"],
-      cwd: process.cwd(),
-      env: process.env as Record<string, string | undefined>,
-      attachStdio: false,
-      // Intentionally no getListenerToken — simulates --no-listen.
-      onChildExit: () => exitedResolve(),
-    });
-    assert.ok(wrapper, "wrapper should start");
-    try {
-      await new Promise((r) => setTimeout(r, 50));
-      const sock = await connectIpcClient(localPipe);
-      const replies: WrapperToExtension[] = [];
-      let tokenResolve: () => void;
-      const sawToken = new Promise<void>((r) => {
-        tokenResolve = r;
-      });
-      readIpc<WrapperToExtension>(sock, (msg) => {
-        replies.push(msg);
-        if (msg.type === "token" || msg.type === "token_error") {
-          tokenResolve();
-        }
-      });
-      sendIpc(sock, { type: "get_token" });
-      await Promise.race([sawToken, new Promise((_, j) => setTimeout(() => j(new Error("token reply timeout")), 3000))]);
-      const reply = replies.find((m) => m.type === "token" || m.type === "token_error");
-      assert.ok(reply);
-      assert.equal(reply!.type, "token_error");
-    } finally {
-      try {
-        wrapper!.pty.kill();
-      } catch { /* ignore */ }
-      try {
-        wrapper!.server.close();
-      } catch { /* ignore */ }
-      await Promise.race([exited, new Promise<void>((r) => setTimeout(r, 2000).unref())]);
-    }
   });
 });
 

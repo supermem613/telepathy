@@ -25,10 +25,10 @@ test/
 │   ├── orchestrator.test.ts           # Deferred pty_subscribe, listener merge, dialer disconnect
 │   ├── peers.test.ts                  # Peer registry add/remove/dedup
 │   ├── protocol.test.ts               # Message-type union exhaustiveness
-│   ├── pty-wrapper.test.ts            # node-pty subprocess + IPC stream (incl. get_token handler)
+│   ├── pty-wrapper.test.ts            # node-pty subprocess + IPC stream
 │   ├── token.test.ts                  # Token encode/decode/format
-│   ├── token-cmd.test.ts              # `telepathy token` CLI: success / --json / no env / wrapper errors / timeout
-│   ├── transport.test.ts              # TLS-PSK accept + dial round-trip
+│   ├── reconnect-cmd.test.ts          # `telepathy reconnect` CLI shape: no token, no discovery, host-terminal help
+│   ├── transport.test.ts              # TLS-PSK accept + dial round-trip, hard-TTL gate, single-use onConsume, setSecret PSK swap
 │   └── viewer.test.ts                 # HTTP+WS server: token gate, /api/*, HTML substitution
 ├── integration/                       # Real CLI subprocess + real Electron window
 │   ├── echo-bot.cjs                   # Wrapped subprocess used by Playwright E2E

@@ -25,11 +25,14 @@ describe("protocol shape", () => {
       "pty_frame",
       "pty_input",
       "pty_resize",
+      "pty_input_resize",
       "pty_unsubscribe",
+      "spawn_host",
+      "spawn_host_ack",
     ];
     // Compile-time exhaustiveness is enforced by TS; this just guards the
     // string list against accidental drift (we'd notice if a type was
     // removed from the union — TS would reject the cast).
-    assert.equal(types.length, 15);
+    assert.equal(types.length, 18);
   });
 });

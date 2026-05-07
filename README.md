@@ -22,7 +22,8 @@ telepathy host
 #    bound: 0.0.0.0:7423
 #    addr:  192.168.1.69:7423
 #    token: TLP1YCUACRI477YZWUANC5FW66Y
-#    valid: until host exits  (run `telepathy token` from the wrapped shell to reprint)
+#    valid: 10 min, single-use
+#    if the app disconnects later, type `telepathy reconnect` here to re-pair
 #    waiting for a peer to connect, or press Enter / Space to start the shell now…
 ```
 
@@ -36,14 +37,24 @@ telepathy connect TLP1YCUACRI477YZWUANC5FW66Y --term   # mirror in this terminal
 
 Box A's shell spawns the moment a peer connects. From the wall: type into the active tab, watch frames stream in real time, double-click a tab label to rename it, click the per-tab ⎘ to spawn a sibling `telepathy host` in a fresh terminal window on that tab's host machine and auto-attach it as a new tab.
 
-Lost the token (terminal scrolled, app closed, want to re-attach)? From **inside the wrapped shell on box A**:
+### Token lifecycle: TTL + single-use + re-pair
+
+Every join token is **single-use** and has a **10-minute hard TTL** enforced server-side. The first successful TLS-PSK handshake burns the token; any subsequent dial — and any dial after the TTL expires — is rejected by the listener.
+
+If the app disconnects but the original `telepathy host` terminal is still running, type this in that same host terminal:
 
 ```bash
-telepathy token                               # reprints the current join token
-telepathy token --json                        # machine-readable: {ok, token, addr, bindHost}
+telepathy reconnect
 ```
 
-The token is valid for as long as the host process keeps running.
+The wrapper observes that local typed line, rotates the listener secret in memory, and prints a fresh **60-second, single-use** re-pair token on the host terminal. The command is deliberately not a discovery client: if it runs outside the original host terminal, it cannot find a host or return a token.
+
+What this guarantees:
+
+- **No token cache or host discovery.** `telepathy reconnect` does not read env vars, write disk state, open a local socket, or fetch a token.
+- **Owner-console authority.** Re-pair is initiated only from the original host terminal's local stdin path. Remote peer input and child process output do not trigger it.
+- **Live peer sessions survive.** TLS-PSK derives session keys at handshake; rotating the listener's PSK does not rekey live sockets.
+- **The old token dies immediately.** New dials with it fail. The re-pair token is the only valid token for the next dial, and it is single-use too.
 
 ## Commands
 
@@ -54,7 +65,7 @@ The token is valid for as long as the host process keeps running.
 | `telepathy app [tokens...]` | Open the Electron wall viewer; auto-links any tokens passed as args. Each tab has a ⎘ button that asks the tab's host machine to spawn a sibling `telepathy host` in a fresh terminal window and auto-attaches it as a new tab (Windows host only) |
 | `telepathy peers` | List active peer links and the local listener (if any) — `--json` for scripting |
 | `telepathy disconnect [peer]` | Tear down one peer link by alias, or all peers when no arg is given |
-| `telepathy token` | Reprint the current join token. Run from inside a `telepathy host` wrapped shell — `--json` for scripting |
+| `telepathy reconnect` | Re-pair a disconnected app when typed in the original host terminal |
 | `telepathy doctor` | Preflight: node version, node-pty availability, default port reachability, browser launcher |
 | `telepathy install-shortcut` | Windows-only: create a Start-menu shortcut for `telepathy app` you can pin to taskbar (`--uninstall` to remove) |
 | `telepathy update` | Pull the latest commits, `npm install`, and rebuild the local telepathy clone in place |
@@ -69,6 +80,7 @@ telepathy host --no-listen -- node my-tui.js          # wrap a command without e
 telepathy host -- pwsh -NoProfile                     # wrap a specific shell (everything after `--` is the child command)
 telepathy connect <token> --as box-a                  # rename the local peer alias
 telepathy connect <token> --term                      # raw stdin/stdout PTY mirror; Ctrl-] to detach
+telepathy reconnect                                   # type in the original host terminal to mint a short-lived re-pair token
 telepathy peers --json                                # machine-readable peer list
 telepathy disconnect captain                          # disconnect just the "captain" peer
 telepathy doctor                                      # check the install
@@ -101,6 +113,7 @@ npm run clean               # remove dist/
 CI runs on Ubuntu + Windows via GitHub Actions (`.github/workflows/ci.yml`).
 
 → Test conventions and runner internals: [`docs/testing.md`](docs/testing.md)
+→ Architecture notes (owner-console re-pair; token security model): [`docs/architecture.md`](docs/architecture.md)
 
 ## Project structure
 

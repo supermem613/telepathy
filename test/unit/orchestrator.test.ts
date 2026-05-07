@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { acceptStart, acceptStop, connectPeer, disconnectPeer, setLocalPty } from "../../src/core/api.js";
+import { acceptStart, acceptStop, connectPeer, disconnectPeer, rotateListenerSecret, setLocalPty } from "../../src/core/api.js";
 import { onFirstPeerConnect, type LocalPty } from "../../src/core/orchestrator.js";
 
 function randomPort(): number {
@@ -76,7 +76,10 @@ describe("orchestrator: onFirstPeerConnect hook", () => {
       await new Promise((r) => setTimeout(r, 50));
       assert.equal(fireCount, 1, "first connect should fire");
       // A second connect should not fire the hook again (it's one-shot).
-      await connectPeer({ token: accept.token, alias: "second" });
+      // Tokens are single-use under transport.ts onConsume — mint a fresh
+      // one via rotateListenerSecret so the second handshake can succeed.
+      const rotated = rotateListenerSecret();
+      await connectPeer({ token: rotated.token, alias: "second" });
       await new Promise((r) => setTimeout(r, 50));
       assert.equal(fireCount, 1, "second connect should not fire (one-shot)");
     } finally {

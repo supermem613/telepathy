@@ -16,6 +16,21 @@ export type Frame = Message;
 
 export type FrameHandler = (frame: Frame, socket: TLSSocket) => void | Promise<void>;
 
+// A live listener whose accepted PSK can be hot-swapped without dropping
+// any currently-connected sockets. TLS-PSK derives session keys at
+// handshake time, so changing the PSK only affects FUTURE handshakes —
+// the live sockets continue with the keys they already negotiated. This
+// is what lets host-terminal re-pair invalidate the old token instantly
+// while keeping any still-connected app/viewer alive.
+//
+// The optional `getExpiresAt` callback gates handshakes on TTL: if it
+// returns a timestamp in the past, pskCallback returns null and the
+// handshake fails. Pass undefined for "no TTL" (used by tests / future
+// transports). The host wires this to acceptState.expiresAt.
+export type TelepathyServer = TlsServer & {
+  setSecret(secret: Buffer): void;
+};
+
 export function startListener(opts: {
   port: number;
   bindHost?: string;     // default: all interfaces
@@ -23,8 +38,27 @@ export function startListener(opts: {
   onFrame: FrameHandler;
   onConnect?: (socket: TLSSocket) => void;
   onDisconnect?: (socket: TLSSocket, err?: Error) => void;
-}): TlsServer {
-  const psk = secretToPsk(opts.secret);
+  // Returns the current absolute expiry timestamp (ms since epoch). When
+  // Date.now() exceeds it, pskCallback returns null (handshake fails).
+  // Omit for an always-valid listener (tests, future transports).
+  getExpiresAt?: () => number;
+  // Called synchronously the moment pskCallback commits to handing out
+  // the PSK to a handshake (after identity + TTL checks pass, before
+  // returning). The implementation should mutate the source-of-truth
+  // expiry (e.g. flip expiresAt to 0) so the NEXT pskCallback hits the
+  // TTL gate and returns null. This is what gives "single-use" semantics:
+  // exactly one handshake can succeed per minted token. Concurrent dials
+  // race; the loser sees the burnt token. The handshake-fails-after-PSK
+  // case (rare: cipher mismatch / mid-handshake RST) burns the token
+  // anyway — tradeoff for atomic single-use. Recovery = restart host or
+  // rotate.
+  onConsume?: () => void;
+}): TelepathyServer {
+  // Mutable PSK holder — `setSecret` swaps it in place. Closing over a
+  // const Buffer would freeze the listener at startup PSK and force a
+  // re-bind to rotate (which would drop live sockets). The closure here
+  // stays the same; we just point it at a new Buffer.
+  let psk = secretToPsk(opts.secret);
   const server = createTlsServer({
     pskCallback: (_socket, identity) => {
       // Server pskCallback returns the raw PSK (Buffer) or null. We accept
@@ -32,6 +66,17 @@ export function startListener(opts: {
       if (typeof identity !== "string" || identity.length === 0) {
         return null;
       }
+      // Hard TTL gate: if the listener's current token has expired,
+      // refuse the handshake. Live sockets stay up because their session
+      // keys were derived at their own handshake; only NEW dials fail.
+      if (opts.getExpiresAt && Date.now() > opts.getExpiresAt()) {
+        return null;
+      }
+      // Single-use burn: commit to consuming the token NOW (synchronously,
+      // before returning the PSK). Any concurrent or subsequent handshake
+      // that re-enters pskCallback will see expiresAt flipped to 0 by
+      // onConsume and fall through the TTL gate above.
+      opts.onConsume?.();
       return psk;
     },
     ciphers: PSK_CIPHERS,
@@ -48,7 +93,15 @@ export function startListener(opts: {
   } else {
     server.listen(opts.port);
   }
-  return server;
+  // Attach setSecret to the returned server so the host module can rotate
+  // without reaching into transport internals. Cast: createTlsServer
+  // returns a TlsServer; we extend it with one method, keeping the type
+  // tight via the TelepathyServer alias.
+  return Object.assign(server, {
+    setSecret(newSecret: Buffer): void {
+      psk = secretToPsk(newSecret);
+    },
+  }) as TelepathyServer;
 }
 
 export function dial(opts: {

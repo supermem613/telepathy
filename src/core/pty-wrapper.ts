@@ -64,12 +64,46 @@ export type StartWrapperOptions = {
   // Whether to attach the wrapper to the host process's stdin/stdout for
   // user passthrough. Default true (production CLI). Tests pass false.
   attachStdio?: boolean;
-  // Source of the listener's current token, queried on `get_token` IPC
-  // requests from the wrapped shell (used by `telepathy token`). Returns
-  // undefined when there is no listener (e.g. host was started with
-  // --no-listen) — in that case the wrapper replies with `token_error`.
-  getListenerToken?: () => { token: string; addr: string; bindHost: string } | undefined;
+  // Called when the local host terminal types `telepathy reconnect`.
+  // Remote peer input and child output do not pass through this observer.
+  onReconnectRequest?: () => string | Promise<string>;
 };
+
+export type ReconnectInputState = {
+  line: string;
+};
+
+const RECONNECT_COMMANDS = new Set(["telepathy reconnect", ":telepathy reconnect"]);
+const MAX_RECONNECT_LINE_CHARS = 256;
+
+export function observeReconnectInput(state: ReconnectInputState, chunk: Buffer): number {
+  let count = 0;
+  for (const byte of chunk) {
+    if (byte === 0x0d || byte === 0x0a) {
+      if (RECONNECT_COMMANDS.has(state.line.trim())) {
+        count += 1;
+      }
+      state.line = "";
+      continue;
+    }
+    if (byte === 0x03 || byte === 0x15) {
+      state.line = "";
+      continue;
+    }
+    if (byte === 0x08 || byte === 0x7f) {
+      state.line = state.line.slice(0, -1);
+      continue;
+    }
+    if (byte < 0x20 || byte > 0x7e) {
+      continue;
+    }
+    state.line += String.fromCharCode(byte);
+    if (state.line.length > MAX_RECONNECT_LINE_CHARS) {
+      state.line = state.line.slice(-MAX_RECONNECT_LINE_CHARS);
+    }
+  }
+  return count;
+}
 
 export async function startWrapper(opts: StartWrapperOptions): Promise<WrapperState | null> {
   const ptyMod = await tryLoadPty();
@@ -281,11 +315,35 @@ export async function startWrapper(opts: StartWrapperOptions): Promise<WrapperSt
   let stdinHandler: ((chunk: Buffer) => void) | undefined;
   let resizeHandler: (() => void) | undefined;
   if (attachStdio) {
+    const reconnectInputState: ReconnectInputState = { line: "" };
+    let reconnectInFlight = false;
+    const runReconnect = (): void => {
+      if (!opts.onReconnectRequest || reconnectInFlight) {
+        return;
+      }
+      reconnectInFlight = true;
+      Promise.resolve()
+        .then(() => opts.onReconnectRequest!())
+        .then((message) => {
+          process.stderr.write(`\r\n${message.trimEnd()}\r\n`);
+        })
+        .catch((err) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          process.stderr.write(`\r\ntelepathy reconnect failed: ${msg}\r\n`);
+        })
+        .finally(() => {
+          reconnectInFlight = false;
+        });
+    };
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(true);
     }
     stdinHandler = (chunk: Buffer): void => {
+      const reconnectRequests = observeReconnectInput(reconnectInputState, chunk);
       pty.write(chunk.toString("utf8"));
+      for (let i = 0; i < reconnectRequests; i += 1) {
+        runReconnect();
+      }
     };
     process.stdin.on("data", stdinHandler);
     // Host stdout resize → recompute MIN. Whether the host is currently
@@ -330,16 +388,6 @@ export async function startWrapper(opts: StartWrapperOptions): Promise<WrapperSt
           }
           subscriberSizes.set(socket, { cols: msg.cols, rows: msg.rows });
           recomputeSize();
-        } else if (msg.type === "get_token") {
-          const info = opts.getListenerToken?.();
-          const reply: WrapperToExtension = info
-            ? { type: "token", token: info.token, addr: info.addr, bindHost: info.bindHost }
-            : { type: "token_error", error: "host has no active listener (started with --no-listen?)" };
-          try {
-            sendIpc(socket, reply);
-          } catch {
-            // Socket likely already closed; nothing to do.
-          }
         }
       }, () => {
         subscribers.delete(socket);

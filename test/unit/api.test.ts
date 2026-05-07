@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { connect as tlsConnect } from "node:tls";
 import { createServer as createNetServer } from "node:net";
-import { acceptStart, acceptStop, connectPeer, describePeers, disconnectPeer } from "../../src/core/api.js";
+import { acceptStart, acceptStop, connectPeer, describePeers, disconnectPeer, rotateListenerSecret, ACCEPT_TOKEN_TTL_MS } from "../../src/core/api.js";
 import { decodeToken } from "../../src/core/token.js";
 import { DEFAULT_PORT } from "../../src/core/protocol.js";
 
@@ -127,19 +127,79 @@ describe("api.acceptStart / connectPeer round-trip", () => {
       await new Promise<void>((resolve) => squatter.close(() => resolve()));
     }
   });
+});
 
-  it("AcceptResult and ListenerInfo carry no `expiresInSec` field (TTL was removed)", async () => {
+describe("api.rotateListenerSecret", () => {
+  it("AcceptResult and ListenerInfo carry expiresInSec (TTL is enforced)", async () => {
     const port = randomPort();
     const accept = await acceptStart({ port });
     try {
-      assert.equal((accept as Record<string, unknown>).expiresInSec, undefined,
-        "AcceptResult must not carry expiresInSec — token is valid for the host process lifetime");
+      assert.equal(typeof accept.expiresInSec, "number", "AcceptResult must carry expiresInSec");
+      assert.ok(accept.expiresInSec > 0, "expiresInSec must be positive at startup");
+      assert.ok(accept.expiresInSec <= ACCEPT_TOKEN_TTL_MS / 1000, "expiresInSec must be <= TTL");
       const info = describePeers().listening;
       assert.ok(info, "listener should be advertised");
-      assert.equal((info as Record<string, unknown>).expiresInSec, undefined,
-        "ListenerInfo must not carry expiresInSec");
+      assert.equal(typeof info!.expiresInSec, "number", "ListenerInfo must carry expiresInSec");
     } finally {
       acceptStop();
     }
+  });
+
+  it("rotateListenerSecret mints a fresh token (different secret) and resets the TTL clock", async () => {
+    const port = randomPort();
+    const accept = await acceptStart({ port });
+    try {
+      const beforeSecret = decodeToken(accept.token).secret.toString("hex");
+      // Sleep a tick so the new TTL deadline is observably later than the old.
+      await new Promise((r) => setTimeout(r, 10));
+      const rotated = rotateListenerSecret();
+      const afterSecret = decodeToken(rotated.token).secret.toString("hex");
+      assert.notEqual(afterSecret, beforeSecret, "rotated token must encode a different secret");
+      assert.equal(rotated.addr, accept.addr, "addr (host:port) must not change on rotation");
+      assert.equal(rotated.bindHost, accept.bindHost, "bindHost must not change on rotation");
+      assert.ok(rotated.expiresInSec > 0, "rotated token must have positive TTL");
+      // describePeers().listening reflects the new token after rotation.
+      const info = describePeers().listening;
+      assert.equal(info?.token, rotated.token, "listener info must reflect rotated token");
+    } finally {
+      acceptStop();
+    }
+  });
+
+  it("rotateListenerSecret accepts a short re-pair TTL", async () => {
+    const port = randomPort();
+    await acceptStart({ port });
+    try {
+      const rotated = rotateListenerSecret({ ttlMs: 60_000 });
+      assert.equal(rotated.expiresInSec, 60);
+      assert.equal(describePeers().listening?.expiresInSec, 60);
+    } finally {
+      acceptStop();
+    }
+  });
+
+  it("after rotation: old token cannot dial; new token can; first live peer survives the swap", async () => {
+    const port = randomPort();
+    const accept = await acceptStart({ port });
+    try {
+      const firstPeer = await connectPeer({ token: accept.token });
+      // Old token is now BURNT (single-use). Even before rotation, a
+      // second dial with it would fail. Rotate to mint a fresh one.
+      const rotated = rotateListenerSecret();
+      // Fresh dial with the rotated token works.
+      const secondPeer = await connectPeer({ token: rotated.token, alias: "second" });
+      assert.equal(secondPeer.alias.length > 0, true);
+      // The first peer is still in the registry (live socket survived).
+      const peers = describePeers().peers;
+      assert.ok(peers.some((p) => p.alias === firstPeer.alias), "first peer must survive rotation");
+      assert.ok(peers.some((p) => p.alias === secondPeer.alias), "second peer must be present");
+    } finally {
+      disconnectPeer({});
+      acceptStop();
+    }
+  });
+
+  it("rotateListenerSecret throws when there is no active listener", () => {
+    assert.throws(() => rotateListenerSecret(), /no active listener/);
   });
 });

@@ -2,10 +2,9 @@
 // thin commander dispatcher; the real work lives here so it stays unit-
 // testable and reusable.
 
-import type { Server as TlsServer } from "node:tls";
 import { createServer as createNetServer } from "node:net";
 import { encodeToken, decodeToken, generateSecret, pickLocalIPv4 } from "./token.js";
-import { dial, startListener } from "./transport.js";
+import { dial, startListener, type TelepathyServer } from "./transport.js";
 import {
   adoptIncoming,
   adoptOutgoing,
@@ -22,13 +21,25 @@ import {
 } from "./peers.js";
 import { DEFAULT_PORT } from "./protocol.js";
 
+// Hard TTL on every minted token. The PSK callback in transport.ts gates
+// new TLS handshakes on Date.now() < expiresAt — once the boundary
+// passes, dials with the current token fail. SINGLE-USE on top of that:
+// a successful pskCallback flips expiresAt to 0, so the same token
+// cannot be used twice (concurrent dials race; the loser fails). Live
+// peer connections survive (their session keys were derived at handshake;
+// the live PSK value doesn't matter to them). The user's escape hatch is
+// `telepathy reconnect` from the original host terminal, which rotates
+// the listener in-process and prints a fresh short-lived token locally.
+export const ACCEPT_TOKEN_TTL_MS = 10 * 60 * 1000;
+
 type AcceptState = {
-  server: TlsServer;
+  server: TelepathyServer;
   port: number;
   bindHost: string;
   advertisedHost: string;
   secret: Buffer;
   token: string;
+  expiresAt: number;     // ms since epoch; pskCallback rejects past this
 };
 
 let acceptState: AcceptState | undefined;
@@ -43,19 +54,19 @@ export type AcceptResult = {
   token: string;
   addr: string;         // <advertisedHost>:<port>, what peers will dial
   bindHost: string;     // what we actually listen on
+  expiresInSec: number; // seconds until the token's PSK gate slams shut
 };
 
 export async function acceptStart(opts: AcceptOptions = {}): Promise<AcceptResult> {
-  // The listener's PSK is generated once at startup and never rotates while
-  // the host process is alive. The original join token therefore remains
-  // valid for the lifetime of the process — there is no TTL. If a listener
-  // already exists, return its token; callers who want a fresh one must
-  // restart the host (see the consider session for the rotation tradeoff).
+  // Caller already has an active listener — return the current state
+  // unchanged. No automatic rotation here; re-pair rotation is explicit
+  // via rotateListenerSecret().
   if (acceptState) {
     return {
       token: acceptState.token,
       addr: `${acceptState.advertisedHost}:${acceptState.port}`,
       bindHost: acceptState.bindHost,
+      expiresInSec: Math.max(0, Math.round((acceptState.expiresAt - Date.now()) / 1000)),
     };
   }
   const advertisedHost = opts.advertise ?? pickLocalIPv4();
@@ -82,12 +93,27 @@ export async function acceptStart(opts: AcceptOptions = {}): Promise<AcceptResul
   } else {
     chosenPort = 0;
   }
+  const expiresAt = Date.now() + ACCEPT_TOKEN_TTL_MS;
   const server = startListener({
     port: chosenPort,
     bindHost,
     secret,
     onFrame: () => undefined,
     onConnect: (socket) => adoptIncoming(socket, fallbackAlias),
+    // Bind the listener's TTL gate to the live acceptState. Captured by
+    // closure so rotateListenerSecret()'s expiresAt update is visible
+    // here without re-binding the server.
+    getExpiresAt: () => acceptState?.expiresAt ?? 0,
+    // Single-use: when pskCallback hands out the PSK, burn the token by
+    // flipping expiresAt to 0. The next pskCallback (concurrent dial,
+    // reconnect attempt) hits the TTL gate above and returns null. To
+    // get a new token, the host owner must type `telepathy reconnect` in
+    // the original host terminal.
+    onConsume: () => {
+      if (acceptState) {
+        acceptState.expiresAt = 0;
+      }
+    },
   });
   await new Promise<void>((resolve, reject) => {
     server.once("listening", resolve);
@@ -106,11 +132,49 @@ export async function acceptStart(opts: AcceptOptions = {}): Promise<AcceptResul
     advertisedHost,
     secret,
     token,
+    expiresAt,
   };
   return {
     token,
     addr: `${advertisedHost}:${port}`,
     bindHost,
+    expiresInSec: Math.round(ACCEPT_TOKEN_TTL_MS / 1000),
+  };
+}
+
+// Rotate the listener's PSK in place: generate a new 8-byte secret,
+// rebuild the token (host+port unchanged), swap the PSK on the live
+// listener, reset the TTL clock to a fresh 10 minutes. Returns the new
+// token + addr + bindHost + expiry.
+//
+// Invariants:
+//   • The OLD token stops authenticating new dials immediately
+//     (pskCallback's holder now points at the new PSK).
+//   • Currently-connected TLS-PSK sockets keep working (their session
+//     keys were derived at handshake; live PSK swap doesn't touch them).
+//   • Atomic with respect to other JS turns — the swap and the token
+//     mutation happen synchronously inside this function.
+//   • Throws if there is no active listener (host started with --no-listen).
+export function rotateListenerSecret(opts: { ttlMs?: number } = {}): AcceptResult {
+  if (!acceptState) {
+    throw new Error("rotateListenerSecret: no active listener (host running with --no-listen?)");
+  }
+  const ttlMs = opts.ttlMs ?? ACCEPT_TOKEN_TTL_MS;
+  const newSecret = generateSecret();
+  const newToken = encodeToken({
+    host: acceptState.advertisedHost,
+    port: acceptState.port,
+    secret: newSecret,
+  });
+  acceptState.server.setSecret(newSecret);
+  acceptState.secret = newSecret;
+  acceptState.token = newToken;
+  acceptState.expiresAt = Date.now() + ttlMs;
+  return {
+    token: newToken,
+    addr: `${acceptState.advertisedHost}:${acceptState.port}`,
+    bindHost: acceptState.bindHost,
+    expiresInSec: Math.round(ttlMs / 1000),
   };
 }
 
@@ -185,6 +249,7 @@ export type ListenerInfo = {
   token: string;
   addr: string;
   bindHost: string;
+  expiresInSec: number;
 };
 
 export function describePeers(): { peers: PeerInfo[]; listening?: ListenerInfo } {
@@ -201,6 +266,7 @@ export function describePeers(): { peers: PeerInfo[]; listening?: ListenerInfo }
       token: acceptState.token,
       addr: `${acceptState.advertisedHost}:${acceptState.port}`,
       bindHost: acceptState.bindHost,
+      expiresInSec: Math.max(0, Math.round((acceptState.expiresAt - Date.now()) / 1000)),
     }
     : undefined;
   return { peers: out, listening };

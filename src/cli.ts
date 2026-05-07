@@ -12,7 +12,7 @@ import { runPeers, runDisconnect } from "./commands/peers.js";
 import { runDoctor } from "./commands/doctor.js";
 import { runInstallShortcut } from "./commands/install-shortcut.js";
 import { runUpdate } from "./commands/update.js";
-import { runToken } from "./commands/token.js";
+import { runReconnect } from "./commands/reconnect.js";
 import { setDebug } from "./core/debug.js";
 
 const pkgPath = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
@@ -91,11 +91,10 @@ program
   });
 
 program
-  .command("token")
-  .description("Reprint the current join token (run from inside a `telepathy host` wrapped shell)")
-  .option("--json", "Machine-readable output")
-  .action(async (options) => {
-    await runToken({ json: options.json });
+  .command("reconnect")
+  .description("Re-pair a disconnected app when typed in the original telepathy host terminal")
+  .action(() => {
+    runReconnect();
   });
 
 program
