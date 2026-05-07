@@ -21,4 +21,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run lint
-      - run: npm test
+      - name: Test (Linux, under xvfb for Electron)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm test
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
+        run: npm test
