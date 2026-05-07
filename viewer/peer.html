@@ -86,6 +86,54 @@
       .replace(/\x1b\[\d+;\d+R/g, "")
       .replace(/\x1b\[\d+n/g, "");
   }
+  async function copyTerminalSelection() {
+    const selection = term.getSelection() || window.getSelection().toString() || (term.textarea && term.textarea.value) || "";
+    if (!selection) { return false; }
+    if (term.textarea) {
+      term.textarea.value = selection;
+      term.textarea.focus();
+      term.textarea.select();
+      document.execCommand("copy");
+    }
+    await navigator.clipboard.writeText(selection);
+    term.clearSelection();
+    if (term.textarea) { term.textarea.value = ""; }
+    window.getSelection().removeAllRanges();
+    return true;
+  }
+  async function pasteIntoTerminal() {
+    const text = await navigator.clipboard.readText();
+    if (!text) { return false; }
+    term.paste(text);
+    return true;
+  }
+  function hasTerminalCopySource() {
+    return term.hasSelection() || !!window.getSelection().toString() || !!(term.textarea && term.textarea.value);
+  }
+  term.attachCustomKeyEventHandler((event) => {
+    if (event.type !== "keydown") { return true; }
+    const key = event.key.toLowerCase();
+    const isShortcut = event.ctrlKey || event.metaKey;
+    if (!isShortcut || event.altKey || (key !== "c" && key !== "v")) { return true; }
+    if (key === "c" && !hasTerminalCopySource()) { return true; }
+    event.preventDefault();
+    event.stopPropagation();
+    (key === "c" ? copyTerminalSelection() : pasteIntoTerminal()).catch((err) => {
+      term.write(`\r\n\x1b[31m[telepathy] ${key === "c" ? "Copy" : "Paste"} failed: ${err.message || err}\x1b[0m\r\n`);
+    });
+    return false;
+  });
+  const clipboardTarget = term.element || document.getElementById("term-host");
+  const handleRightClick = (event) => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const op = hasTerminalCopySource() ? copyTerminalSelection() : pasteIntoTerminal();
+    op.catch((err) => term.write(`\r\n\x1b[31m[telepathy] Clipboard failed: ${err.message || err}\x1b[0m\r\n`));
+  };
+  clipboardTarget.addEventListener("contextmenu", handleRightClick, true);
+  document.addEventListener("contextmenu", (event) => {
+    if (document.getElementById("term-host").contains(event.target)) { handleRightClick(event); }
+  }, true);
   term.onData((data) => {
     const filtered = stripXtermReplies(data);
     if (!filtered) return;

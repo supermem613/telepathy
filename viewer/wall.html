@@ -340,6 +340,56 @@
       .replace(/\x1b\[\d+;\d+R/g, "")   // DSR cursor position: ESC[24;80R
       .replace(/\x1b\[\d+n/g, "");      // DSR status: ESC[0n, ESC[3n
   }
+  async function copyTerminalSelection(term) {
+    const selection = term.getSelection() || window.getSelection().toString() || (term.textarea && term.textarea.value) || "";
+    if (!selection) { return false; }
+    if (term.textarea) {
+      term.textarea.value = selection;
+      term.textarea.focus();
+      term.textarea.select();
+      document.execCommand("copy");
+    }
+    await navigator.clipboard.writeText(selection);
+    term.clearSelection();
+    if (term.textarea) { term.textarea.value = ""; }
+    window.getSelection().removeAllRanges();
+    return true;
+  }
+  async function pasteIntoTerminal(term) {
+    const text = await navigator.clipboard.readText();
+    if (!text) { return false; }
+    term.paste(text);
+    return true;
+  }
+  function hasTerminalCopySource(term) {
+    return term.hasSelection() || !!window.getSelection().toString() || !!(term.textarea && term.textarea.value);
+  }
+  function installTerminalClipboard(termHost, term) {
+    term.attachCustomKeyEventHandler((event) => {
+      if (event.type !== "keydown") { return true; }
+      const key = event.key.toLowerCase();
+      const isShortcut = event.ctrlKey || event.metaKey;
+      if (!isShortcut || event.altKey || (key !== "c" && key !== "v")) { return true; }
+      if (key === "c" && !hasTerminalCopySource(term)) { return true; }
+      event.preventDefault();
+      event.stopPropagation();
+      (key === "c" ? copyTerminalSelection(term) : pasteIntoTerminal(term)).catch((err) => {
+        showToast((key === "c" ? "Copy" : "Paste") + " failed: " + (err.message || err), true);
+      });
+      return false;
+    });
+    const clipboardTarget = term.element || termHost;
+    const handleRightClick = (event) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const op = hasTerminalCopySource(term) ? copyTerminalSelection(term) : pasteIntoTerminal(term);
+      op.catch((err) => showToast("Clipboard failed: " + (err.message || err), true));
+    };
+    clipboardTarget.addEventListener("contextmenu", handleRightClick, true);
+    document.addEventListener("contextmenu", (event) => {
+      if (termHost.contains(event.target)) { handleRightClick(event); }
+    }, true);
+  }
   async function api(method, path, body) {
     const r = await fetch(path + (path.includes("?") ? "&" : "?") + "t=" + encodeURIComponent(TOKEN), {
       method,
@@ -490,6 +540,7 @@
       fit = new window.FitAddon.FitAddon();
       term.loadAddon(fit);
       term.open(termHost);
+      installTerminalClipboard(termHost, term);
       // NOTE: termHost is display:none until activate() is called. We
       // intentionally don't fit() here — fit against a hidden element
       // returns garbage dimensions (~80x24 default) and would tell the

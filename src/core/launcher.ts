@@ -31,11 +31,12 @@ export function openHostInTerminal(opts: LaunchOptions): void {
     throw new Error(`spawn-host: cli entry not found at ${cliPath} — is the build current?`);
   }
 
-  // `cmd /c start "<title>" node "<cliPath>" host --token-handoff-pipe <pipe>`
+  // `cmd /c start "<title>" /MAX node "<cliPath>" host --token-handoff-pipe <pipe>`
   // - `start` is a cmd builtin that launches in a new console window.
   // - The first quoted arg to `start` is the window title; the empty string
   //   would be ambiguous on some Windows versions, so we pass an explicit
   //   "telepathy host" title.
+  // - /MAX asks Windows to open the spawned host terminal maximized.
   // - We use plain `node` from PATH (telepathy ships its own dependency on
   //   node already; running `telepathy host` already requires node).
   // - detached + stdio:"ignore" so the launcher returns immediately and the
@@ -43,16 +44,7 @@ export function openHostInTerminal(opts: LaunchOptions): void {
   //   (false) — we WANT the window visible.
   const child = spawn(
     "cmd.exe",
-    [
-      "/c",
-      "start",
-      "telepathy host",
-      "node",
-      cliPath,
-      "host",
-      "--token-handoff-pipe",
-      opts.pipePath,
-    ],
+    buildWindowsStartArgs(cliPath, opts.pipePath),
     {
       detached: true,
       stdio: "ignore",
@@ -60,4 +52,18 @@ export function openHostInTerminal(opts: LaunchOptions): void {
     },
   );
   child.unref();
+}
+
+export function buildWindowsStartArgs(cliPath: string, pipePath: string): string[] {
+  return [
+    "/c",
+    "start",
+    "telepathy host",
+    "/MAX",
+    "node",
+    cliPath,
+    "host",
+    "--token-handoff-pipe",
+    pipePath,
+  ];
 }
