@@ -8,7 +8,6 @@ import { dirname, join } from "node:path";
 import { runHost } from "./commands/host.js";
 import { runConnect } from "./commands/connect.js";
 import { runApp } from "./commands/app.js";
-import { runPeers, runDisconnect } from "./commands/peers.js";
 import { runDoctor } from "./commands/doctor.js";
 import { runInstallShortcut } from "./commands/install-shortcut.js";
 import { runUpdate } from "./commands/update.js";
@@ -72,22 +71,6 @@ program
   .description("Open the Electron wall viewer; auto-links any tokens passed as args (multi-tab, mouse-clickable)")
   .action(async (tokens: string[]) => {
     await runApp({ tokens });
-  });
-
-program
-  .command("peers")
-  .description("List active peer links and the local listener (if any)")
-  .option("--json", "Machine-readable output")
-  .action((options) => {
-    runPeers({ json: options.json });
-  });
-
-program
-  .command("disconnect [peer]")
-  .description("Tear down one peer link (by alias) or all peers (no arg)")
-  .option("--json", "Machine-readable output")
-  .action((peer: string | undefined, options) => {
-    runDisconnect({ peer, json: options.json });
   });
 
 program

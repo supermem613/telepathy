@@ -63,8 +63,6 @@ What this guarantees:
 | `telepathy host` | Wrap your shell (or any command after `--`) under ConPTY, bind a TLS-PSK listener, print a join token |
 | `telepathy connect <token>` | Link to a host's wall in a browser (default), or mirror it in this terminal with `--term` |
 | `telepathy app [tokens...]` | Open the Electron wall viewer; auto-links any tokens passed as args. Each tab has a ⎘ button that asks the tab's host machine to spawn a sibling `telepathy host` in a fresh terminal window and auto-attaches it as a new tab (Windows host only) |
-| `telepathy peers` | List active peer links and the local listener (if any) — `--json` for scripting |
-| `telepathy disconnect [peer]` | Tear down one peer link by alias, or all peers when no arg is given |
 | `telepathy reconnect` | Re-pair a disconnected app when typed in the original host terminal |
 | `telepathy doctor` | Preflight: node version, node-pty availability, default port reachability, browser launcher |
 | `telepathy install-shortcut` | Windows-only: create a Start-menu shortcut for `telepathy app` you can pin to taskbar (`--uninstall` to remove) |
@@ -81,8 +79,6 @@ telepathy host -- pwsh -NoProfile                     # wrap a specific shell (e
 telepathy connect <token> --as box-a                  # rename the local peer alias
 telepathy connect <token> --term                      # raw stdin/stdout PTY mirror; Ctrl-] to detach
 telepathy reconnect                                   # type in the original host terminal to mint a short-lived re-pair token
-telepathy peers --json                                # machine-readable peer list
-telepathy disconnect captain                          # disconnect just the "captain" peer
 telepathy doctor                                      # check the install
 ```
 
@@ -92,8 +88,7 @@ telepathy doctor                                      # check the install
   Add a runtime dep only with a clear reason — every dep is supply-chain risk.
 - **`doctor` first.** Every CLI ships a `doctor` command that returns
   `CheckResult[]` (name, ok, detail, hint). Hints carry remediation text.
-- **`--json` everywhere** that produces output meant for scripting (`peers`,
-  `disconnect`, `doctor`).
+- **`--json` everywhere** that produces output meant for scripting (`doctor`).
 - **Plan → preview → confirm → apply** for any command that mutates state on
   disk or remote. Silent auto-apply is an anti-pattern.
 - **No env vars for behavior.** Everything is CLI-flag driven (`--debug`,
@@ -120,7 +115,7 @@ CI runs on Ubuntu + Windows via GitHub Actions (`.github/workflows/ci.yml`).
 ```
 src/
   cli.ts                  Entry point — Commander.js dispatcher
-  commands/               One file per CLI verb (host, connect, app, peers, …)
+  commands/               One file per CLI verb (host, connect, app, reconnect, …)
   core/                   Orchestrator, transport (TLS-PSK), PTY wrapper, IPC, viewer
 electron/
   main.cjs                Electron shell + in-process wall HTTP+WS server

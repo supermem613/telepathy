@@ -450,9 +450,8 @@
       // Double-click to rename: swap the label for an inline <input>.
       // Enter / blur commits, Escape cancels. Rename is local-only (this
       // viewer session) — the underlying peer alias on the wire doesn't
-      // change, so other commands (`telepathy peers`, `disconnect`) still
-      // use the original alias. Tracked separately on the entry as
-      // `displayName` so we can keep using `peer.alias` as the routing key.
+      // change. Tracked separately on the entry as `displayName` so we
+      // can keep using `peer.alias` as the routing key.
       label.addEventListener("dblclick", (e) => {
         e.stopPropagation();
         startRename(peer.alias);
@@ -686,9 +685,7 @@
   // Local-only rename: swap the .label span for an <input>. Enter or
   // blur commits the new text into entry.displayName (and into
   // label.textContent on commit). Escape cancels. The peer's wire alias
-  // is unchanged — this is a viewer-side cosmetic only, so other
-  // commands like `telepathy peers` and `telepathy disconnect` keep
-  // using the original alias as their key.
+  // is unchanged — this is a viewer-side cosmetic only.
   function startRename(alias) {
     const entry = tabs.get(alias);
     if (!entry || !entry.label) return;

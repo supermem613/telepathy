@@ -286,7 +286,7 @@ export function disconnectPeer(opts: { peer?: string }): { disconnected: string[
 export function getPeerOrThrow(alias: string): Peer {
   const peer = getPeer(alias);
   if (!peer) {
-    throw new Error(`unknown peer "${alias}". Run \`telepathy peers\` to list active links.`);
+    throw new Error(`unknown peer "${alias}".`);
   }
   return peer;
 }
