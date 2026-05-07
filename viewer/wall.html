@@ -349,10 +349,14 @@
       term.textarea.select();
       document.execCommand("copy");
     }
-    await navigator.clipboard.writeText(selection);
+    // Clear copy-source state synchronously — execCommand("copy") already
+    // captured the text. Deferring cleanup past the async writeText creates
+    // a race where the next right-click sees stale textarea.value via
+    // hasTerminalCopySource and takes the copy path instead of paste.
     term.clearSelection();
     if (term.textarea) { term.textarea.value = ""; }
     window.getSelection().removeAllRanges();
+    await navigator.clipboard.writeText(selection);
     return true;
   }
   async function pasteIntoTerminal(term) {

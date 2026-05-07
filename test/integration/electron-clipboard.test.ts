@@ -240,4 +240,56 @@ describe("electron e2e: wall clipboard gestures", () => {
 
     await waitForTerminalText("RX:50415354455f52494748545f434c49434b", "right-click paste bytes");
   });
+
+  // Guards the async-cleanup race that caused the Linux/xvfb CI failure:
+  // copyTerminalSelection must clear hasTerminalCopySource state (textarea.value,
+  // window selection) synchronously — before the async navigator.clipboard.writeText
+  // — so the next right-click handler correctly takes the paste path. Without the
+  // fix, cleanup was deferred past the await and the stale textarea.value made
+  // hasTerminalCopySource return true, routing the handler to copy (no-op) instead
+  // of paste. This test is deterministic on all platforms because dispatchEvent runs
+  // handlers synchronously, and async functions execute up to their first await
+  // before yielding.
+  it("right-click copy clears hasTerminalCopySource synchronously", async (t) => {
+    if (!ptyAvailable) {
+      t.skip("node-pty not available");
+      return;
+    }
+    assert.ok(page, "Electron page should have loaded");
+
+    await selectVisibleText("RAW_ECHO_READY");
+
+    const state = await page.evaluate(() => {
+      // Stub writeText on the prototype to never resolve — widens the race
+      // window to infinity so cleanup-after-await would deterministically
+      // leave stale state.
+      const proto = Object.getPrototypeOf(navigator.clipboard);
+      const origWrite = proto.writeText;
+      proto.writeText = function () {
+        return new Promise(() => { /* never resolves */ });
+      };
+
+      const xterm = document.querySelector(".term-host.active .xterm");
+      if (!xterm) {
+        throw new Error("no .xterm element");
+      }
+      xterm.dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true, cancelable: true, button: 2,
+      }));
+
+      const textarea = document.querySelector(".term-host.active textarea") as HTMLTextAreaElement | null;
+      const result = {
+        textareaValue: textarea?.value ?? null,
+        windowSelection: window.getSelection()?.toString() ?? "",
+      };
+
+      proto.writeText = origWrite;
+      return result;
+    });
+
+    assert.equal(state.textareaValue, "",
+      "textarea.value must be cleared synchronously after copy");
+    assert.equal(state.windowSelection, "",
+      "window selection must be cleared synchronously after copy");
+  });
 });
