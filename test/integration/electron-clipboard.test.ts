@@ -241,6 +241,32 @@ describe("electron e2e: wall clipboard gestures", () => {
     await waitForTerminalText("RX:50415354455f52494748545f434c49434b", "right-click paste bytes");
   });
 
+  // Guards the Linux/xvfb CI failure where xterm.js populates textarea.value
+  // with accessibility/IME text on focus (e.g. after a left-click). The old
+  // hasTerminalCopySource treated any non-empty textarea.value as a copy
+  // source, routing right-click to copy instead of paste. The fix requires a
+  // real text selection (selectionStart !== selectionEnd) in the textarea.
+  it("right-click pastes when textarea has accessibility text but no selection", async (t) => {
+    if (!ptyAvailable) {
+      t.skip("node-pty not available");
+      return;
+    }
+    assert.ok(page, "Electron page should have loaded");
+
+    await setElectronClipboardText("PASTE_A11Y_GUARD");
+    // Simulate xterm.js accessibility behavior: textarea has content but
+    // the cursor is collapsed (no user selection).
+    await page.evaluate(() => {
+      const textarea = document.querySelector(".term-host.active textarea") as HTMLTextAreaElement | null;
+      if (!textarea) { throw new Error("textarea not found"); }
+      textarea.value = "ACCESSIBILITY_TEXT";
+      textarea.setSelectionRange(0, 0);
+    });
+    await page.click(".term-host.active .xterm", { button: "right" });
+
+    await waitForTerminalText("RX:50415354455f413131595f4755415244", "right-click paste with a11y textarea");
+  });
+
   // Guards the async-cleanup race that caused the Linux/xvfb CI failure:
   // copyTerminalSelection must clear hasTerminalCopySource state (textarea.value,
   // window selection) synchronously — before the async navigator.clipboard.writeText

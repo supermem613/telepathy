@@ -86,8 +86,18 @@
       .replace(/\x1b\[\d+;\d+R/g, "")
       .replace(/\x1b\[\d+n/g, "");
   }
+  // Returns the user-selected substring of the xterm textarea, or "".
+  // xterm.js populates textarea.value for accessibility/IME on focus — a
+  // collapsed cursor (selectionStart === selectionEnd) is not a copy source.
+  function getTextareaSelection() {
+    const ta = term.textarea;
+    if (!ta || !ta.value || ta.selectionStart === ta.selectionEnd) { return ""; }
+    const s = Math.min(ta.selectionStart, ta.selectionEnd);
+    const e = Math.max(ta.selectionStart, ta.selectionEnd);
+    return ta.value.slice(s, e);
+  }
   async function copyTerminalSelection() {
-    const selection = term.getSelection() || window.getSelection().toString() || (term.textarea && term.textarea.value) || "";
+    const selection = term.getSelection() || window.getSelection().toString() || getTextareaSelection() || "";
     if (!selection) { return false; }
     if (term.textarea) {
       term.textarea.value = selection;
@@ -112,7 +122,7 @@
     return true;
   }
   function hasTerminalCopySource() {
-    return term.hasSelection() || !!window.getSelection().toString() || !!(term.textarea && term.textarea.value);
+    return term.hasSelection() || !!window.getSelection().toString() || !!getTextareaSelection();
   }
   term.attachCustomKeyEventHandler((event) => {
     if (event.type !== "keydown") { return true; }

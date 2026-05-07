@@ -1,6 +1,6 @@
 {
   "name": "telepathy",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Peer-to-peer terminal sharing over the LAN: expose any process under ConPTY, watch from any other box",
   "type": "module",
   "bin": {
