@@ -320,4 +320,45 @@ describe("electron e2e: wall clipboard gestures", () => {
     assert.equal(state.windowSelection, "",
       "window selection must be cleared synchronously after copy");
   });
+
+  // Guards the clipboard-overwrite race that caused the Linux/xvfb CI timeout
+  // in test "right-click paste sends clipboard text into the connected
+  // terminal": copyTerminalSelection used to call BOTH document.execCommand
+  // ("copy") (sync) and navigator.clipboard.writeText (async). The caller
+  // fires the promise without awaiting, so the async writeText can land after
+  // the next operation sets a new clipboard value — overwriting it with stale
+  // text. The fix: skip writeText when execCommand already succeeded.
+  it("right-click copy does not call async writeText when execCommand succeeds", async (t) => {
+    if (!ptyAvailable) {
+      t.skip("node-pty not available");
+      return;
+    }
+    assert.ok(page, "Electron page should have loaded");
+
+    await selectVisibleText("RAW_ECHO_READY");
+
+    const writeTextCalled = await page.evaluate(() => {
+      const proto = Object.getPrototypeOf(navigator.clipboard);
+      const origWrite = proto.writeText;
+      let called = false;
+      proto.writeText = async function () {
+        called = true;
+      };
+
+      const xterm = document.querySelector(".term-host.active .xterm");
+      if (!xterm) {
+        throw new Error("no .xterm element");
+      }
+      xterm.dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true, cancelable: true, button: 2,
+      }));
+
+      proto.writeText = origWrite;
+      return called;
+    });
+
+    assert.equal(writeTextCalled, false,
+      "writeText must not be called when execCommand('copy') succeeds — " +
+      "the async write races with subsequent clipboard operations");
+  });
 });

@@ -353,20 +353,28 @@
   async function copyTerminalSelection(term) {
     const selection = term.getSelection() || window.getSelection().toString() || getTextareaSelection(term) || "";
     if (!selection) { return false; }
-    if (term.textarea) {
-      term.textarea.value = selection;
-      term.textarea.focus();
-      term.textarea.select();
-      document.execCommand("copy");
+    let copied = false;
+    if (term.textarea && typeof document.execCommand === "function") {
+      try {
+        term.textarea.value = selection;
+        term.textarea.focus();
+        term.textarea.select();
+        copied = document.execCommand("copy");
+      } catch {
+        copied = false;
+      }
     }
-    // Clear copy-source state synchronously — execCommand("copy") already
-    // captured the text. Deferring cleanup past the async writeText creates
-    // a race where the next right-click sees stale textarea.value via
-    // hasTerminalCopySource and takes the copy path instead of paste.
+    // Clear copy-source state synchronously so the next right-click sees
+    // clean state via hasTerminalCopySource.
     term.clearSelection();
     if (term.textarea) { term.textarea.value = ""; }
     window.getSelection().removeAllRanges();
-    await navigator.clipboard.writeText(selection);
+    // Fall back to async clipboard API only when execCommand wasn't available.
+    // Using both creates a race: the fire-and-forget writeText can land after
+    // the next operation has already set a new clipboard value.
+    if (!copied) {
+      await navigator.clipboard.writeText(selection);
+    }
     return true;
   }
   async function pasteIntoTerminal(term) {
