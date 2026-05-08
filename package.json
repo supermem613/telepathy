@@ -7,7 +7,7 @@
     "telepathy": "./dist/cli.js"
   },
   "scripts": {
-    "prebuild": "eslint src/ test/ && tsc --noEmit -p test/tsconfig.json",
+    "prebuild": "npm run lint",
     "build": "tsc",
     "pretest": "tsc",
     "test": "node test/run.mjs test/**/*.test.ts",

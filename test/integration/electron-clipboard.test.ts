@@ -258,7 +258,9 @@ describe("electron e2e: wall clipboard gestures", () => {
     // the cursor is collapsed (no user selection).
     await page.evaluate(() => {
       const textarea = document.querySelector(".term-host.active textarea") as HTMLTextAreaElement | null;
-      if (!textarea) { throw new Error("textarea not found"); }
+      if (!textarea) {
+        throw new Error("textarea not found");
+      }
       textarea.value = "ACCESSIBILITY_TEXT";
       textarea.setSelectionRange(0, 0);
     });
