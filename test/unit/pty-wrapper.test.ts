@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { observeReconnectInput, startWrapper, type ReconnectInputState } from "../../src/core/pty-wrapper.js";
+import { buildPtySpawnOptions, encodePtyDataForReplay, observeReconnectInput, startWrapper, type ReconnectInputState } from "../../src/core/pty-wrapper.js";
 import { connectIpcClient, readIpc, type WrapperToExtension } from "../../src/core/ipc.js";
 import { buildPipePath } from "../../src/core/ipc.js";
 
@@ -32,6 +32,24 @@ describe("pty-wrapper reconnect input observer", () => {
   it("supports simple backspace while observing local input", () => {
     const state: ReconnectInputState = { line: "" };
     assert.equal(observeReconnectInput(state, Buffer.from("telepathy reconnectx\x7f\r", "utf8")), 1);
+  });
+});
+
+describe("pty-wrapper PTY output encoding", () => {
+  it("requests raw node-pty output bytes instead of decoded strings", () => {
+    const opts = buildPtySpawnOptions({
+      pipePath: "ignored",
+      command: process.execPath,
+      args: [],
+      cwd: process.cwd(),
+      env: {},
+    }, 80, 24);
+    assert.equal((opts as { encoding?: string | null }).encoding, null);
+  });
+
+  it("preserves raw node-pty Buffer output bytes for Unicode terminal glyphs", () => {
+    const bytes = Buffer.from("─❯● Copilot uses AI", "utf8");
+    assert.deepEqual(encodePtyDataForReplay(bytes), bytes);
   });
 });
 

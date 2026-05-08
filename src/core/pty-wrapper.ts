@@ -13,7 +13,7 @@ import { trackDecModes, buildReplayWithModes } from "./dec-modes.js";
 import type { Server, Socket } from "node:net";
 
 export type Pty = {
-  onData(handler: (data: string) => void): void;
+  onData(handler: (data: string | Buffer) => void): void;
   onExit(handler: (e: { exitCode: number; signal?: number }) => void): void;
   write(data: string): void;
   resize(cols: number, rows: number): void;
@@ -21,6 +21,23 @@ export type Pty = {
   cols: number;
   rows: number;
 };
+
+export function encodePtyDataForReplay(data: string | Buffer): Buffer {
+  return Buffer.isBuffer(data) ? Buffer.from(data) : Buffer.from(data, "utf8");
+}
+
+export function buildPtySpawnOptions(opts: StartWrapperOptions, cols: number, rows: number): Parameters<PtyModule["spawn"]>[2] {
+  return {
+    name: "xterm-256color",
+    cols,
+    rows,
+    cwd: opts.cwd,
+    env: opts.env,
+    encoding: null,
+    useConptyDll: true,
+    conptyInheritCursor: true,
+  } as Parameters<PtyModule["spawn"]>[2];
+}
 
 export type PtyModule = {
   spawn(file: string, args: string[], opts: {
@@ -112,6 +129,8 @@ export async function startWrapper(opts: StartWrapperOptions): Promise<WrapperSt
   }
   const cols = process.stdout.columns ?? 132;
   const rows = process.stdout.rows ?? 42;
+  // encoding:null keeps raw PTY bytes. On Windows runners the default
+  // string decoding can mojibake UTF-8 box drawing as CP437 text.
   // useConptyDll: true picks node-pty's bundled conpty.dll (newer than
   // the OS-bundled one) which fixes known VT-passthrough bugs —
   // specifically, the bug where alt-screen-mode TUIs render their
@@ -123,15 +142,7 @@ export async function startWrapper(opts: StartWrapperOptions): Promise<WrapperSt
   // node-pty's main spawn() type is IPtyForkOptions (POSIX-flavored)
   // and doesn't expose the Windows-only flags; the underlying impl
   // accepts them at runtime.
-  const ptyOpts = {
-    name: "xterm-256color",
-    cols,
-    rows,
-    cwd: opts.cwd,
-    env: opts.env,
-    useConptyDll: true,
-    conptyInheritCursor: true,
-  } as Parameters<typeof ptyMod.spawn>[2];
+  const ptyOpts = buildPtySpawnOptions(opts, cols, rows);
   const pty = ptyMod.spawn(opts.command, opts.args, ptyOpts);
   let ringBuffer: Buffer = Buffer.from("");
   const subscribers = new Set<Socket>();
@@ -216,7 +227,7 @@ export async function startWrapper(opts: StartWrapperOptions): Promise<WrapperSt
     // bytes so the user's terminal sees the original byte stream
     // (powerline glyphs, box-drawing, etc. are multi-byte UTF-8 and get
     // mangled if we round-trip through "binary"/Latin-1).
-    const chunk = Buffer.from(data, "utf8");
+    const chunk = encodePtyDataForReplay(data);
     if (attachStdio) {
       process.stdout.write(chunk);
     }
