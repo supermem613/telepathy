@@ -11,7 +11,8 @@
   header .alias { font-weight: 600; color: #e5e7eb; }
   header .dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; }
   header .hint { margin-left: auto; color: #94a3b8; font-size: 12px; }
-  #term-host { height: calc(100% - 32px); padding: 6px; }
+  #term-host { height: calc(100% - 32px); padding: 6px; display: flex; align-items: flex-end; overflow: hidden; }
+  #term-host .xterm { width: 100%; }
   .xterm-viewport::-webkit-scrollbar { width: 8px; }
   .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
   .xterm-viewport::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 4px; }
@@ -50,20 +51,27 @@
   term.open(document.getElementById("term-host"));
   fit.fit();
   const ws = new WebSocket(`${location.origin.replace("http", "ws")}/ws/${encodeURIComponent(alias)}?t=${encodeURIComponent(TOKEN)}`);
+  let sentInitialResize = false;
   function sendResize() {
     if (ws.readyState !== WebSocket.OPEN) return;
     try { ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows })); } catch (_) { /* ignore */ }
-    // Same rationale as wall.html: clear visible content + scrollback
-    // without resetting terminal modes (alt-screen, focus, etc.) so
-    // alt-screen TUIs keep redrawing in place.
-    try { term.write("\x1b[2J\x1b[3J\x1b[H"); } catch (_) { /* ignore */ }
+    if (sentInitialResize) {
+      // Same rationale as wall.html: clear visible content + scrollback
+      // without resetting terminal modes (alt-screen, focus, etc.) so
+      // alt-screen TUIs keep redrawing in place.
+      try { term.write("\x1b[2J\x1b[3J\x1b[H"); } catch (_) { /* ignore */ }
+    }
+    sentInitialResize = true;
   }
-  ws.onopen = () => { sendResize(); };
+  ws.onopen = () => {};
   term.onResize(sendResize);
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
     if (msg.type === "frame") {
       term.write(b64ToBytes(msg.data));
+      if (!sentInitialResize) {
+        sendResize();
+      }
     } else if (msg.type === "resize") {
       try { term.resize(msg.cols, msg.rows); } catch (_) {}
     } else if (msg.type === "error") {

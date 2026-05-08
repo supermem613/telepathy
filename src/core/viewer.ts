@@ -36,6 +36,9 @@ let viewer: ViewerState | undefined;
 
 // Map peer alias → set of WS clients watching that peer.
 const watchers = new Map<string, Set<WebSocket>>();
+const replayBuffers = new Map<string, Buffer>();
+const remoteSizes = new Map<string, { cols: number; rows: number }>();
+const REPLAY_BUFFER_BYTES = 64 * 1024;
 
 export function getViewerToken(): string | undefined {
   return viewer?.token;
@@ -192,6 +195,8 @@ export function stopViewer(): boolean {
     }
   }
   watchers.clear();
+  replayBuffers.clear();
+  remoteSizes.clear();
   viewer.wss.close();
   viewer.server.close();
   viewer = undefined;
@@ -205,10 +210,17 @@ function attachWatcher(alias: string, peer: Peer, ws: WebSocket): void {
     watchers.set(alias, set);
   }
   set.add(ws);
-  // First watcher → tell the orchestrator to subscribe upstream.
-  if (set.size === 1) {
-    subscribeRemotePty(peer, randomUUID());
+  const cachedSize = remoteSizes.get(alias);
+  if (cachedSize && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "resize", cols: cachedSize.cols, rows: cachedSize.rows }));
   }
+  const cachedReplay = replayBuffers.get(alias);
+  if (cachedReplay && cachedReplay.length > 0 && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "frame", data: cachedReplay.toString("base64") }));
+  }
+  // Every browser terminal has its own xterm state. Re-subscribe on each
+  // watcher attach so the host sends a fresh replay for this client.
+  subscribeRemotePty(peer, randomUUID());
   ws.on("message", (raw) => {
     let msg: { type: string; data?: string; cols?: number; rows?: number };
     try {
@@ -236,6 +248,8 @@ function attachWatcher(alias: string, peer: Peer, ws: WebSocket): void {
       if (stillThere) {
         unsubscribeRemotePty(stillThere);
       }
+      replayBuffers.delete(alias);
+      remoteSizes.delete(alias);
     }
   });
 }
@@ -246,6 +260,8 @@ function installOrchestratorBridge(): void {
   // watchers for that peer.
   setOrchestratorEvents({
     onRemoteFrame: (peer, dataBase64) => {
+      const chunk = Buffer.from(dataBase64, "base64");
+      replayBuffers.set(peer.alias, appendBounded(replayBuffers.get(peer.alias) ?? Buffer.alloc(0), chunk, REPLAY_BUFFER_BYTES));
       const set = watchers.get(peer.alias);
       if (!set) {
         return;
@@ -258,6 +274,7 @@ function installOrchestratorBridge(): void {
       }
     },
     onRemoteResize: (peer, cols, rows) => {
+      remoteSizes.set(peer.alias, { cols, rows });
       const set = watchers.get(peer.alias);
       if (!set) {
         return;
@@ -270,6 +287,14 @@ function installOrchestratorBridge(): void {
       }
     },
   });
+}
+
+function appendBounded(buf: Buffer, chunk: Buffer, max: number): Buffer {
+  if (chunk.length >= max) {
+    return Buffer.from(chunk.subarray(chunk.length - max));
+  }
+  const combined = Buffer.concat([buf, chunk]);
+  return combined.length > max ? Buffer.from(combined.subarray(combined.length - max)) : combined;
 }
 
 function toPeerInfo(p: Peer): {
