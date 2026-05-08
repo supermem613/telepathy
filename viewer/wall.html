@@ -884,10 +884,10 @@
   window.addEventListener("focus", focusActiveTerm);
   // Capture-phase keydown so we see EVERY key, including ones xterm
   // would have absorbed if it were focused. If the active term doesn't
-  // already have focus, grab it. Modifier-only chords (Ctrl/Alt/Shift
-  // alone, no character) don't trigger refocus — we don't want to steal
-  // focus from menu navigation. We also skip when the user is typing
-  // into the rename input or the connect modal's token field.
+  // already have focus, grab it AND replay the key on xterm's textarea
+  // so it isn't swallowed. Without the replay, single-action keys like
+  // Escape (vim mode switch, TUI menu cancel) are silently lost on the
+  // first press after a focus change.
   document.addEventListener("keydown", (e) => {
     if (e.key === "Control" || e.key === "Alt" || e.key === "Shift" || e.key === "Meta") return;
     const tag = (e.target && e.target.tagName) || "";
@@ -897,7 +897,19 @@
     if (!t || !t.term || !t.termHost) return;
     // Already focused? Nothing to do.
     if (t.termHost.contains(document.activeElement)) return;
+    e.preventDefault();
+    e.stopPropagation();
     try { t.term.focus(); } catch (_) { /* ignore */ }
+    // Replay the key on xterm's textarea so xterm processes it.
+    const ta = t.term.textarea;
+    if (ta) {
+      ta.dispatchEvent(new KeyboardEvent(e.type, {
+        key: e.key, code: e.code, keyCode: e.keyCode, which: e.which,
+        ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey,
+        metaKey: e.metaKey, repeat: e.repeat,
+        bubbles: true, cancelable: true,
+      }));
+    }
   }, true);
 })();
 </script>
