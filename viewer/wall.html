@@ -577,7 +577,7 @@
       entry = {
         tab, dot, label, termHost, term, fit, ws,
         lastFrameAt: 0, busyTimer: null, hasPty: peer.hasPty, alias: peer.alias,
-        lastSentCols: 0, lastSentRows: 0, sentInitialResize: false,
+        lastSentCols: 0, lastSentRows: 0,
       };
       // Click anywhere on the term host (including the empty area below
       // the prompt) re-focuses xterm. Without this, click → focus moves
@@ -597,16 +597,6 @@
         entry.lastSentCols = cols;
         entry.lastSentRows = rows;
         try { ws.send(JSON.stringify({ type: "resize", cols, rows })); } catch (_) { /* ignore */ }
-        if (entry.sentInitialResize) {
-          // Clear visible content + scrollback WITHOUT resetting terminal
-          // modes. `term.reset()` (RIS) wipes alt-screen/focus/mouse state
-          // and drops alt-screen TUIs (Copilot CLI, vim, etc.) into the
-          // main buffer where every redraw scrolls instead of overwriting.
-          // \x1b[2J = erase screen, \x1b[3J = erase scrollback,
-          // \x1b[H = cursor home. Mode state untouched.
-          try { term.write("\x1b[2J\x1b[3J\x1b[H"); } catch (_) { /* ignore */ }
-        }
-        entry.sentInitialResize = true;
         // Nudge: send the same size again ~250ms later. Some TUIs
         // (Copilot CLI, vim, anything that draws tables / boxes via
         // absolute positioning) only repaint on receipt of a SIGWINCH;

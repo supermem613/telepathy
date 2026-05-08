@@ -15,11 +15,10 @@
 // We use 0x05 (not 0x04 / Ctrl-D) so tests can exercise Ctrl-C / Ctrl-D
 // passthrough without accidentally killing the bot.
 
-process.stdout.write("RAW_ECHO_READY\n");
-
 if (process.stdin.isTTY) {
   process.stdin.setRawMode(true);
 }
+process.stdout.write("RAW_ECHO_READY\n");
 process.stdin.on("data", (chunk) => {
   if (chunk.includes(0x05)) {
     process.exit(0);

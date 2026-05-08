@@ -55,12 +55,6 @@
   function sendResize() {
     if (ws.readyState !== WebSocket.OPEN) return;
     try { ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows })); } catch (_) { /* ignore */ }
-    if (sentInitialResize) {
-      // Same rationale as wall.html: clear visible content + scrollback
-      // without resetting terminal modes (alt-screen, focus, etc.) so
-      // alt-screen TUIs keep redrawing in place.
-      try { term.write("\x1b[2J\x1b[3J\x1b[H"); } catch (_) { /* ignore */ }
-    }
     sentInitialResize = true;
   }
   ws.onopen = () => {};

@@ -15,10 +15,12 @@
 // no browser. It runs in a few seconds.
 
 import { describe, it, after } from "node:test";
+import { strict as assert } from "node:assert";
 import { startWrapper } from "../../src/core/pty-wrapper.js";
 import { connectIpcClient, sendIpc, readIpc, buildPipePath, type WrapperToExtension, type ExtensionToWrapper } from "../../src/core/ipc.js";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 import type { Socket } from "node:net";
 
 const RAW_BOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "integration", "raw-echo.cjs");
@@ -153,6 +155,14 @@ function skipIfNoPty(t: { skip: (reason?: string) => void }): boolean {
 }
 
 describe("wall input → PTY child round-trip (wrapper IPC)", () => {
+  it("raw-echo READY means raw mode is already enabled", () => {
+    const source = readFileSync(RAW_BOT, "utf8");
+    assert.ok(
+      source.indexOf("setRawMode(true)") < source.indexOf("RAW_ECHO_READY"),
+      "RAW_ECHO_READY must be emitted after setRawMode(true) so CI cannot race bracketed paste/function-key input",
+    );
+  });
+
   it("plain ASCII text reaches the child as raw bytes", async (t) => {
     if (skipIfNoPty(t)) {
       return;

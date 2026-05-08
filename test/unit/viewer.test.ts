@@ -103,6 +103,22 @@ describe("viewer HTTP server", () => {
     }
   });
 
+  it("does not erase replayed terminal output during browser resize", async () => {
+    const v = await startViewer();
+    try {
+      const wall = await get(`/wall?t=${getViewerToken()}`, v.port);
+      const peer = await get(`/peer/box-a?t=${getViewerToken()}`, v.port);
+      assert.equal(wall.status, 200);
+      assert.equal(peer.status, 200);
+      assert.equal(wall.body.includes("\\x1b[2J\\x1b[3J\\x1b[H"), false,
+        "wall.html must not clear xterm on resize; late resize can erase replay-only CI traces");
+      assert.equal(peer.body.includes("\\x1b[2J\\x1b[3J\\x1b[H"), false,
+        "peer.html must not clear xterm on resize; host/TUI output owns repainting");
+    } finally {
+      stopViewer();
+    }
+  });
+
   it("substitutes {{TOKEN}} in /peer HTML too", async () => {
     const v = await startViewer();
     try {
