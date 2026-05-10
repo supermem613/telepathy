@@ -1,7 +1,15 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { request as httpRequest } from "node:http";
+import { WebSocket } from "ws";
 import { startViewer, stopViewer, getViewerToken, getViewerUrl } from "../../src/core/viewer.js";
+import { acceptStart, acceptStop, connectPeer, disconnectPeer, setLocalPty } from "../../src/core/api.js";
+import { listPeers } from "../../src/core/peers.js";
+import type { LocalPty } from "../../src/core/orchestrator.js";
+
+function randomPort(): number {
+  return 27000 + Math.floor(Math.random() * 2000);
+}
 
 function get(path: string, port: number): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
@@ -48,6 +56,39 @@ function post(path: string, port: number, body: unknown): Promise<{ status: numb
     req.on("error", reject);
     req.write(payload);
     req.end();
+  });
+}
+
+function waitForOpen(ws: WebSocket): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("timed out waiting for WebSocket open")), 5000);
+    ws.once("open", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    ws.once("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
+function waitForFrame(ws: WebSocket): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("timed out waiting for replay frame")), 5000);
+    ws.on("message", function onMessage(raw) {
+      const msg = JSON.parse(raw.toString("utf8")) as { type?: string };
+      if (msg.type !== "frame") {
+        return;
+      }
+      clearTimeout(timer);
+      ws.off("message", onMessage);
+      resolve();
+    });
+    ws.once("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
   });
 }
 
@@ -116,6 +157,58 @@ describe("viewer HTTP server", () => {
         "peer.html must not clear xterm on resize; host/TUI output owns repainting");
     } finally {
       stopViewer();
+    }
+  });
+
+  it("resizes the remote PTY before subscribing browser replay", async () => {
+    const order: string[] = [];
+    const subscribers = new Set<(f: { dataBase64: string }) => void>();
+    const addSubscriber = subscribers.add.bind(subscribers);
+    subscribers.add = ((subscriber) => {
+      order.push("subscribe");
+      return addSubscriber(subscriber);
+    }) as typeof subscribers.add;
+
+    const localPty: LocalPty = {
+      state: {
+        cols: 132,
+        rows: 42,
+        ringBuffer: Buffer.from("Describe a task", "utf8"),
+        enabledDecModes: new Map(),
+        subscribers,
+        resizeSubscribers: new Set(),
+      },
+      injectInput: () => undefined,
+      requestResize: (cols, rows) => {
+        order.push(`resize:${cols}x${rows}`);
+      },
+      close: () => undefined,
+    };
+
+    const accept = await acceptStart({ port: randomPort() });
+    setLocalPty(localPty);
+    let ws: WebSocket | undefined;
+    try {
+      const connected = await connectPeer({ token: accept.token });
+      const peer = listPeers().find((p) => p.alias === connected.alias);
+      assert.ok(peer, "connected peer should be available to the viewer");
+
+      const v = await startViewer();
+      ws = new WebSocket(
+        `ws://127.0.0.1:${v.port}/ws/${encodeURIComponent(peer.alias)}?t=${getViewerToken()}&deferReplay=1`,
+      );
+      await waitForOpen(ws);
+      const frame = waitForFrame(ws);
+      ws.send(JSON.stringify({ type: "resize", cols: 80, rows: 24 }));
+      await frame;
+
+      assert.deepEqual(order.slice(0, 2), ["resize:80x24", "subscribe"]);
+    } finally {
+      ws?.close();
+      stopViewer();
+      setLocalPty(null);
+      disconnectPeer({});
+      acceptStop();
     }
   });
 

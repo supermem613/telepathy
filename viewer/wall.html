@@ -573,7 +573,7 @@
       // CLI's bottom-anchored prompt drawn off-screen. The real fit
       // happens in activate() once termHost is .active.
 
-      ws = new WebSocket(`${location.origin.replace("http", "ws")}/ws/${encodeURIComponent(peer.alias)}?t=${encodeURIComponent(TOKEN)}`);
+      ws = new WebSocket(`${location.origin.replace("http", "ws")}/ws/${encodeURIComponent(peer.alias)}?t=${encodeURIComponent(TOKEN)}&deferReplay=1`);
       entry = {
         tab, dot, label, termHost, term, fit, ws,
         lastFrameAt: 0, busyTimer: null, hasPty: peer.hasPty, alias: peer.alias,

@@ -173,7 +173,7 @@ export async function startViewer(opts: { port?: number } = {}): Promise<ViewerS
       ws.close(1011, "unknown peer");
       return;
     }
-    attachWatcher(alias, peer, ws);
+    attachWatcher(alias, peer, ws, { deferReplayUntilResize: url.searchParams.get("deferReplay") === "1" });
   });
 
   viewer = { server, wss, port, token };
@@ -203,7 +203,7 @@ export function stopViewer(): boolean {
   return true;
 }
 
-function attachWatcher(alias: string, peer: Peer, ws: WebSocket): void {
+function attachWatcher(alias: string, peer: Peer, ws: WebSocket, opts: { deferReplayUntilResize: boolean }): void {
   let set = watchers.get(alias);
   if (!set) {
     set = new Set();
@@ -214,13 +214,21 @@ function attachWatcher(alias: string, peer: Peer, ws: WebSocket): void {
   if (cachedSize && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: "resize", cols: cachedSize.cols, rows: cachedSize.rows }));
   }
-  const cachedReplay = replayBuffers.get(alias);
-  if (cachedReplay && cachedReplay.length > 0 && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "frame", data: cachedReplay.toString("base64") }));
+  let subscribed = false;
+  const subscribeAfterResize = (): void => {
+    if (subscribed) {
+      return;
+    }
+    subscribed = true;
+    // Every browser terminal has its own xterm state. Subscribe only after
+    // its fitted size reaches the host, so replay-only TUI screens paint into
+    // the same grid the browser is showing.
+    subscribeRemotePty(peer, randomUUID());
+  };
+  if (!opts.deferReplayUntilResize) {
+    subscribed = true;
+    subscribeRemotePty(peer, randomUUID());
   }
-  // Every browser terminal has its own xterm state. Re-subscribe on each
-  // watcher attach so the host sends a fresh replay for this client.
-  subscribeRemotePty(peer, randomUUID());
   ws.on("message", (raw) => {
     let msg: { type: string; data?: string; cols?: number; rows?: number };
     try {
@@ -238,6 +246,7 @@ function attachWatcher(alias: string, peer: Peer, ws: WebSocket): void {
       // for the right viewport (Copilot CLI's bottom-anchored prompt is
       // the canary; without this it draws off-screen).
       sendRemoteResize(peer, msg.cols, msg.rows);
+      subscribeAfterResize();
     }
   });
   ws.on("close", () => {
