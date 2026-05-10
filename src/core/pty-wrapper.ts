@@ -27,6 +27,7 @@ const CP437_REVERSE = new Map<string, number>(
   Array.from(CP437_HIGH_CHARS, (char, index) => [char, index + 0x80]),
 );
 const STRICT_UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
+const CP437_UTF8_LEAD_CHARS = new Set(["┬", "├", "Γ", "≡"]);
 
 export function encodePtyDataForReplay(data: string | Buffer): Buffer {
   if (Buffer.isBuffer(data)) {
@@ -45,6 +46,9 @@ function decodeUtf8(data: Buffer): string | null {
 }
 
 function decodeCp437MojibakedUtf8(text: string): Buffer | null {
+  if (!looksLikeCp437MojibakedUtf8(text)) {
+    return null;
+  }
   const bytes: number[] = [];
   let sawHighChar = false;
   for (const char of text) {
@@ -64,12 +68,17 @@ function decodeCp437MojibakedUtf8(text: string): Buffer | null {
     return null;
   }
   const repaired = Buffer.from(bytes);
-  try {
-    STRICT_UTF8_DECODER.decode(repaired);
-  } catch {
-    return null;
-  }
   return repaired;
+}
+
+function looksLikeCp437MojibakedUtf8(text: string): boolean {
+  const chars = Array.from(text);
+  for (let i = 0; i < chars.length - 1; i++) {
+    if (CP437_UTF8_LEAD_CHARS.has(chars[i]!) && CP437_REVERSE.has(chars[i + 1]!)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function buildPtySpawnOptions(opts: StartWrapperOptions, cols: number, rows: number): Parameters<PtyModule["spawn"]>[2] {

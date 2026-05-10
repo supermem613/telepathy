@@ -62,8 +62,17 @@ describe("pty-wrapper PTY output encoding", () => {
     assert.deepEqual(encodePtyDataForReplay(Buffer.from("ΓöÇΓ¥»ΓùÅ Copilot uses AI", "utf8")), bytes);
   });
 
+  it("repairs Windows ConPTY CP437-mojibaked chunks split inside UTF-8 sequences", () => {
+    const bytes = Buffer.from([0xe2, 0x94, 0x80, 0xe2]);
+    assert.deepEqual(encodePtyDataForReplay(Buffer.from("ΓöÇΓ", "utf8")), bytes);
+  });
+
   it("leaves normal Unicode string output encoded as UTF-8", () => {
     assert.deepEqual(encodePtyDataForReplay("Café"), Buffer.from("Café", "utf8"));
+  });
+
+  it("leaves a lone Greek gamma encoded as UTF-8", () => {
+    assert.deepEqual(encodePtyDataForReplay("Γ"), Buffer.from("Γ", "utf8"));
   });
 });
 

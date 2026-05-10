@@ -115,52 +115,52 @@ describe("electron e2e: window resize → host PTY resize", () => {
     await page.waitForSelector(".tab", { timeout: 10_000 });
     await page.waitForSelector(".term-host.active", { timeout: 10_000 });
 
-    // Resize the OS window — small enough to differ from the wrapper
-    // startup default (132×42), big enough to be a plausible terminal.
+    const wrapperRe = /\[telepathy\/wrapper\] resize (\d+)x(\d+)/g;
+    const resizeEvents = (): Array<{ cols: number; rows: number }> =>
+      [...hostStderr.matchAll(wrapperRe)].map((m) => ({ cols: Number(m[1]), rows: Number(m[2]) }));
+
+    const beforeFirstResize = resizeEvents().length;
+    // Resize the OS window small enough to differ from the wrapper startup
+    // default (132×42), big enough to be a plausible terminal.
     await app!.evaluate(({ BrowserWindow }, args) => {
       BrowserWindow.getAllWindows()[0].setSize(args.w, args.h);
     }, { w: 900, h: 600 });
 
-    const wrapperRe = /\[telepathy\/wrapper\] resize (\d+)x(\d+)/g;
-
     // The chain: window resize → xterm fit → ws → orchestrator → IPC
     // → pty.resize → wrapper logs `[telepathy/wrapper] resize CxR`.
-    // Wait for any non-default size to appear.
+    // Wait for a resize emitted after this test's explicit OS-window change;
+    // earlier startup/activation fits may already have non-default sizes.
     await waitFor(
-      () => [...hostStderr.matchAll(wrapperRe)].some((m) => !(m[1] === "132" && m[2] === "42")),
-      { timeout: 10_000, what: "wrapper resize log line ≠ 132x42" },
+      () => resizeEvents().length > beforeFirstResize,
+      { timeout: 10_000, what: "wrapper resize log line after first OS resize" },
     );
 
-    const firstMatches = [...hostStderr.matchAll(wrapperRe)];
-    const lastFirst = firstMatches[firstMatches.length - 1]!;
-    const firstCols = Number(lastFirst[1]);
-    const firstRows = Number(lastFirst[2]);
+    const first = resizeEvents()[resizeEvents().length - 1]!;
+    const firstCols = first.cols;
+    const firstRows = first.rows;
     assert.ok(firstCols >= 40 && firstCols <= 200, `cols ${firstCols} not in [40,200]`);
     assert.ok(firstRows >= 10 && firstRows <= 80, `rows ${firstRows} not in [10,80]`);
 
-    // Resize again, larger this time. Confirm a SECOND distinct
-    // resize lands (rules out "only initial size negotiated").
+    const beforeSecondResize = resizeEvents().length;
+    // Resize again, larger this time. Confirm a second resize lands after
+    // this explicit change (rules out "only initial size negotiated").
     await app!.evaluate(({ BrowserWindow }, args) => {
       BrowserWindow.getAllWindows()[0].setSize(args.w, args.h);
     }, { w: 1300, h: 850 });
 
     await waitFor(
-      () => {
-        const all = [...hostStderr.matchAll(wrapperRe)];
-        const last = all[all.length - 1];
-        if (!last) {
-          return false;
-        }
-        return Number(last[1]) !== firstCols || Number(last[2]) !== firstRows;
-      },
-      { timeout: 10_000, what: "second distinct wrapper resize line" },
+      () => resizeEvents().length > beforeSecondResize,
+      { timeout: 10_000, what: "wrapper resize log line after second OS resize" },
     );
 
-    const allMatches = [...hostStderr.matchAll(wrapperRe)];
-    const last = allMatches[allMatches.length - 1]!;
-    const secondCols = Number(last[1]);
-    const secondRows = Number(last[2]);
-    assert.ok(secondCols > firstCols, `cols should grow (was ${firstCols}, now ${secondCols})`);
-    assert.ok(secondRows > firstRows, `rows should grow (was ${firstRows}, now ${secondRows})`);
+    const second = resizeEvents()[resizeEvents().length - 1]!;
+    const secondCols = second.cols;
+    const secondRows = second.rows;
+    assert.ok(secondCols >= 40 && secondCols <= 200, `cols ${secondCols} not in [40,200]`);
+    assert.ok(secondRows >= 10 && secondRows <= 80, `rows ${secondRows} not in [10,80]`);
+    assert.ok(
+      secondCols !== firstCols || secondRows !== firstRows,
+      `second resize should change PTY size (was ${firstCols}x${firstRows}, now ${secondCols}x${secondRows})`,
+    );
   });
 });
