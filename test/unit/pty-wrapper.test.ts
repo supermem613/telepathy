@@ -51,6 +51,15 @@ describe("pty-wrapper PTY output encoding", () => {
     const bytes = Buffer.from("─❯● Copilot uses AI", "utf8");
     assert.deepEqual(encodePtyDataForReplay(bytes), bytes);
   });
+
+  it("repairs Windows ConPTY CP437-mojibaked UTF-8 string output", () => {
+    const bytes = Buffer.from("─❯● Copilot uses AI", "utf8");
+    assert.deepEqual(encodePtyDataForReplay("ΓöÇΓ¥»ΓùÅ Copilot uses AI"), bytes);
+  });
+
+  it("leaves normal Unicode string output encoded as UTF-8", () => {
+    assert.deepEqual(encodePtyDataForReplay("Café"), Buffer.from("Café", "utf8"));
+  });
 });
 
 describe("pty-wrapper IPC end-to-end", () => {

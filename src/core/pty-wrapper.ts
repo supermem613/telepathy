@@ -22,8 +22,45 @@ export type Pty = {
   rows: number;
 };
 
+const CP437_HIGH_CHARS = "ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■\u00a0";
+const CP437_REVERSE = new Map<string, number>(
+  Array.from(CP437_HIGH_CHARS, (char, index) => [char, index + 0x80]),
+);
+const STRICT_UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
+
 export function encodePtyDataForReplay(data: string | Buffer): Buffer {
-  return Buffer.isBuffer(data) ? Buffer.from(data) : Buffer.from(data, "utf8");
+  if (Buffer.isBuffer(data)) {
+    return Buffer.from(data);
+  }
+  return decodeCp437MojibakedUtf8(data) ?? Buffer.from(data, "utf8");
+}
+
+function decodeCp437MojibakedUtf8(text: string): Buffer | null {
+  const bytes: number[] = [];
+  let sawHighChar = false;
+  for (const char of text) {
+    const code = char.codePointAt(0);
+    if (code !== undefined && code <= 0x7f) {
+      bytes.push(code);
+      continue;
+    }
+    const byte = CP437_REVERSE.get(char);
+    if (byte === undefined) {
+      return null;
+    }
+    sawHighChar = true;
+    bytes.push(byte);
+  }
+  if (!sawHighChar) {
+    return null;
+  }
+  const repaired = Buffer.from(bytes);
+  try {
+    STRICT_UTF8_DECODER.decode(repaired);
+  } catch {
+    return null;
+  }
+  return repaired;
 }
 
 export function buildPtySpawnOptions(opts: StartWrapperOptions, cols: number, rows: number): Parameters<PtyModule["spawn"]>[2] {
@@ -223,10 +260,9 @@ export async function startWrapper(opts: StartWrapperOptions): Promise<WrapperSt
   };
 
   pty.onData((data) => {
-    // node-pty emits already-decoded UTF-8 strings. Re-encode to UTF-8
-    // bytes so the user's terminal sees the original byte stream
-    // (powerline glyphs, box-drawing, etc. are multi-byte UTF-8 and get
-    // mangled if we round-trip through "binary"/Latin-1).
+    // Preserve raw PTY bytes. Windows ConPTY can still surface legacy
+    // CP437-decoded strings despite encoding:null; repair those before
+    // replay so UTF-8 terminal glyphs stay intact.
     const chunk = encodePtyDataForReplay(data);
     if (attachStdio) {
       process.stdout.write(chunk);
