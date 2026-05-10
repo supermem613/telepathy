@@ -62,10 +62,17 @@ try {
       stdout = (err.stdout ?? "").toString();
       failedFiles.push(file);
     }
-    process.stdout.write(stdout);
     const tests = parseInt((stdout.match(/^# tests (\d+)/m) ?? [])[1] ?? "0", 10);
     const pass  = parseInt((stdout.match(/^# pass (\d+)/m)  ?? [])[1] ?? "0", 10);
     const fail  = parseInt((stdout.match(/^# fail (\d+)/m)  ?? [])[1] ?? "0", 10);
+    if (fileFailed || fail > 0) {
+      process.stdout.write(stdout);
+      if (!failedFiles.includes(file)) {
+        failedFiles.push(file);
+      }
+    } else {
+      console.log(`# ok ${file} (${pass}/${tests} tests)`);
+    }
     totalTests += tests;
     totalPass += pass;
     totalFail += fail;

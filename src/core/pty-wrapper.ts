@@ -30,9 +30,18 @@ const STRICT_UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
 
 export function encodePtyDataForReplay(data: string | Buffer): Buffer {
   if (Buffer.isBuffer(data)) {
-    return Buffer.from(data);
+    const text = decodeUtf8(data);
+    return text ? decodeCp437MojibakedUtf8(text) ?? Buffer.from(data) : Buffer.from(data);
   }
   return decodeCp437MojibakedUtf8(data) ?? Buffer.from(data, "utf8");
+}
+
+function decodeUtf8(data: Buffer): string | null {
+  try {
+    return STRICT_UTF8_DECODER.decode(data);
+  } catch {
+    return null;
+  }
 }
 
 function decodeCp437MojibakedUtf8(text: string): Buffer | null {

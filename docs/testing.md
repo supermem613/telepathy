@@ -227,7 +227,7 @@ The runner enforces hermeticity. The next editor must preserve:
 
 - **HOME sandbox.** `HOME`, `USERPROFILE`, and `LOCALAPPDATA` are pointed at a tmpdir for unit tests. Opt-out via `TELEPATHY_TEST_REAL_HOME=1` (or by placing the test in `test/integration/`).
 - **No `node --test` worker subprocesses.** `--test`'s IPC pipe intermittently fails on Windows runners with "Unable to deserialize cloned data" errors. The runner uses `node --import tsx --test-reporter=tap <file>` so node:test auto-starts in-process. Do not switch back to `--test`.
-- **TAP aggregation.** The runner parses `# tests/# pass/# fail` lines from each file's TAP output and prints a single `# AGGREGATE` summary, then exits non-zero if any file failed.
+- **TAP aggregation.** The runner parses `# tests/# pass/# fail` lines from each file's TAP output, prints compact `# ok <file> (<pass>/<tests> tests)` lines for passing files, preserves full TAP for failing files, and prints a single `# AGGREGATE` summary before exiting non-zero if any file failed.
 - **Per-file env.** Each test file gets its own env built by `envForFile(file)` so unit + integration tests run correctly in the same `npm test` invocation.
 
 ## What NOT to test
