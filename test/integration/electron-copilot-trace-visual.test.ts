@@ -81,6 +81,11 @@ before(async () => {
     env: { ...process.env, ELECTRON_DISABLE_SANDBOX: "1" },
   });
   page = await app.firstWindow();
+  // Guards the Windows runner viewport: Electron can be height-constrained
+  // there, and replay-only TUI traces must still show header + prompt rows.
+  await app.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0].setSize(1280, 600);
+  });
   await page.waitForLoadState("domcontentloaded");
 });
 
@@ -110,7 +115,7 @@ describe("electron e2e: recorded Copilot CLI trace visual replay", () => {
     try {
       await waitForAsync(async () => {
         const text = await page!.evaluate(() => document.body.innerText);
-        return text.includes("Copilot uses AI") && text.includes("Describe a task");
+        return text.includes("Describe a task") && text.includes("❯");
       }, { timeout: 10_000, what: "recorded Copilot CLI trace visible in xterm" });
     } catch (err) {
       const diag = await page.evaluate(() => ({

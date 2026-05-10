@@ -312,6 +312,7 @@
   // alias -> { tabEl, dotEl, labelEl, termHost, term, fit, ws, lastFrameAt, busyTimer, hasPty }
   const tabs = new Map();
   let activeAlias = null;
+  const MAX_WALL_COLS = 132;
 
   // ---- helpers ----------------------------------------------------------
 
@@ -352,6 +353,12 @@
     const s = Math.min(ta.selectionStart, ta.selectionEnd);
     const e = Math.max(ta.selectionStart, ta.selectionEnd);
     return ta.value.slice(s, e);
+  }
+  function fitWallTerm(entry) {
+    entry.fit.fit();
+    if (entry.term.cols > MAX_WALL_COLS) {
+      entry.term.resize(MAX_WALL_COLS, entry.term.rows);
+    }
   }
   async function copyTerminalSelection(term) {
     const selection = term.getSelection() || window.getSelection().toString() || getTextareaSelection(term) || "";
@@ -549,7 +556,7 @@
         throw new Error("xterm.js failed to load (window.Terminal is undefined)");
       }
       term = new window.Terminal({
-        fontSize: 16,
+        fontSize: 12,
         fontFamily: '"CaskaydiaCove Nerd Font", "Cascadia Code NF", "Cascadia Code", "FiraCode Nerd Font", "FiraCode NF", "JetBrainsMono Nerd Font", "JetBrainsMono NF", "Hack Nerd Font", "MesloLGS NF", "Consolas", "Menlo", monospace',
         allowProposedApi: true,
         cursorBlink: true,
@@ -573,7 +580,7 @@
       // CLI's bottom-anchored prompt drawn off-screen. The real fit
       // happens in activate() once termHost is .active.
 
-      ws = new WebSocket(`${location.origin.replace("http", "ws")}/ws/${encodeURIComponent(peer.alias)}?t=${encodeURIComponent(TOKEN)}&deferReplay=1`);
+      ws = new WebSocket(`${location.origin.replace("http", "ws")}/ws/${encodeURIComponent(peer.alias)}?t=${encodeURIComponent(TOKEN)}`);
       entry = {
         tab, dot, label, termHost, term, fit, ws,
         lastFrameAt: 0, busyTimer: null, hasPty: peer.hasPty, alias: peer.alias,
@@ -622,7 +629,7 @@
         // (Common case: first tab — refreshPeers called createTab then
         // activate before WS connected.)
         if (termHost.classList.contains("active")) {
-          try { fit.fit(); } catch (_) {}
+          try { fitWallTerm(entry); } catch (_) {}
           sendResizeNow();
         }
       };
@@ -706,7 +713,7 @@
         // and the input's blur listener would commit the unchanged
         // prefill — making rename appear to never open at all.
         requestAnimationFrame(() => {
-          try { t.fit.fit(); } catch (_) {}
+          try { fitWallTerm(t); } catch (_) {}
           try { t.sendResizeNow && t.sendResizeNow(); } catch (_) {}
           if (t.tab.querySelector("input.rename-input")) { return; }
           try { t.term.focus(); } catch (_) {}
@@ -856,7 +863,7 @@
       if (!t.fit || !t.termHost) continue;
       // Only fit visible terms — fitting a hidden one returns garbage.
       if (!t.termHost.classList.contains("active")) continue;
-      try { t.fit.fit(); } catch (_) {}
+      try { fitWallTerm(t); } catch (_) {}
       try { t.sendResizeNow && t.sendResizeNow(); } catch (_) {}
     }
   });
