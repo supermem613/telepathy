@@ -9,7 +9,7 @@ export function secretToPsk(secret: Buffer): Buffer {
 }
 
 export const PSK_IDENTITY = "telepathy";
-// Intersection of Node 22 OpenSSL and Electron 42 BoringSSL PSK ciphers.
+// Intersection of Node 24 OpenSSL and Electron 42 BoringSSL PSK ciphers.
 // We DON'T use the GCM variants (PSK-AES{128,256}-GCM-SHA*) because
 // BoringSSL omits them — including them caused NO_CIPHER_MATCH when
 // the dialer ran inside Electron and the listener inside Node.

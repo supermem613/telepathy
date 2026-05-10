@@ -46,4 +46,12 @@ describe("cli: bare-run banner", () => {
     assert.doesNotMatch(r.stdout, new RegExp(`^telepathy v${VERSION.replace(/\./g, "\\.")}`));
     assert.match(r.stdout, /^\[/, "doctor --json output should start with [");
   });
+
+  it("doctor enforces the Node 24 runtime contract", () => {
+    const r = run(["doctor", "--json"]);
+    const checks = JSON.parse(r.stdout) as Array<{ name: string; ok: boolean; hint?: string }>;
+    const nodeCheck = checks.find((check) => check.name === "node >= 24");
+    assert.ok(nodeCheck, "doctor should report the Node 24 runtime requirement");
+    assert.equal(nodeCheck.ok, true, nodeCheck.hint);
+  });
 });

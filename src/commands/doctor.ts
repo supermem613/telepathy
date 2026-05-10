@@ -23,10 +23,10 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
   const v = process.versions.node;
   const major = parseInt(v.split(".")[0]!, 10);
   checks.push({
-    name: "node >= 20",
-    ok: major >= 20,
+    name: "node >= 24",
+    ok: major >= 24,
     detail: `node ${v}`,
-    hint: major < 20 ? "install Node.js 20 or newer (https://nodejs.org)" : undefined,
+    hint: major < 24 ? "install Node.js 24 or newer (https://nodejs.org)" : undefined,
   });
 
   let ptyOk = false;
