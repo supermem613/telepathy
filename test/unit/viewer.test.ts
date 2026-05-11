@@ -139,6 +139,7 @@ describe("viewer HTTP server", () => {
       assert.match(r.body, new RegExp(`/static/addon-fit\\.js\\?t=${tk}`));
       assert.match(r.body, /allowProposedApi: true/);
       assert.match(r.body, /term\.unicode\.activeVersion = "11"/);
+      assert.match(r.body, /fontSize: 16/);
     } finally {
       stopViewer();
     }
@@ -223,6 +224,7 @@ describe("viewer HTTP server", () => {
       assert.match(r.body, new RegExp(`/static/addon-unicode11\\.js\\?t=${tk}`));
       assert.match(r.body, /allowProposedApi: true/);
       assert.match(r.body, /term\.unicode\.activeVersion = "11"/);
+      assert.match(r.body, /fontSize: 16/);
     } finally {
       stopViewer();
     }

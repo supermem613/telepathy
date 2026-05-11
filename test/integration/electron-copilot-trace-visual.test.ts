@@ -82,7 +82,7 @@ before(async () => {
   });
   page = await app.firstWindow();
   // Guards the Windows runner viewport: Electron can be height-constrained
-  // there, and replay-only TUI traces must still show header + prompt rows.
+  // there, and replay-only TUI traces must still show prompt/status rows.
   await app.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows()[0].setSize(1280, 600);
   });
@@ -115,7 +115,7 @@ describe("electron e2e: recorded Copilot CLI trace visual replay", () => {
     try {
       await waitForAsync(async () => {
         const text = await page!.evaluate(() => document.body.innerText);
-        return text.includes("Describe a task") && text.includes("Environment loaded");
+        return text.includes("Environment loaded") && text.includes("/ commands · ? help");
       }, { timeout: 10_000, what: "recorded Copilot CLI trace visible in xterm" });
     } catch (err) {
       const diag = await page.evaluate(() => ({
@@ -138,16 +138,16 @@ describe("electron e2e: recorded Copilot CLI trace visual replay", () => {
       return {
         rows: rows.length,
         nonEmptyRowCount: nonEmptyRows.length,
-        hasCopilotHeader: nonEmptyRows.some((row) => row.text.includes("Describe a task")),
         hasEnvironmentLoaded: nonEmptyRows.some((row) => row.text.includes("Environment loaded")),
+        hasPromptStatus: nonEmptyRows.some((row) => row.text.includes("/ commands · ? help")),
         bottomGap: hostRect && last ? hostRect.bottom - last.rect.bottom : null,
         xtermBottomGap: hostRect && xtermRect ? hostRect.bottom - xtermRect.bottom : null,
         lastText: last?.text ?? null,
       };
     });
 
-    assert.equal(state.hasCopilotHeader, true, `Copilot header should render: ${JSON.stringify(state)}`);
     assert.equal(state.hasEnvironmentLoaded, true, `Copilot environment status should render: ${JSON.stringify(state)}`);
+    assert.equal(state.hasPromptStatus, true, `Copilot prompt status should render: ${JSON.stringify(state)}`);
     assert.ok(state.nonEmptyRowCount >= 5, `trace should render multiple visible rows: ${JSON.stringify(state)}`);
     assert.ok(state.xtermBottomGap !== null && state.xtermBottomGap < 2,
       `xterm grid should be bottom-aligned in the host: ${JSON.stringify(state)}`);
