@@ -111,6 +111,26 @@ async function waitForTerminalText(text: string, what: string): Promise<void> {
   }, { timeout: 10_000, what });
 }
 
+async function terminalText(): Promise<string> {
+  assert.ok(page, "Electron page should have loaded");
+  return page.evaluate(() => document.body.innerText);
+}
+
+async function assertNoDuplicateTerminalText(text: string, what: string): Promise<void> {
+  try {
+    await waitForAsync(async () => {
+      const matches = (await terminalText()).match(new RegExp(text, "g")) ?? [];
+      return matches.length > 1;
+    }, { timeout: 500, interval: 50, what });
+  } catch (err) {
+    if (err instanceof Error && err.message.includes("waitForAsync timed out")) {
+      return;
+    }
+    throw err;
+  }
+  assert.fail(`${what} appeared more than once`);
+}
+
 async function electronClipboardText(): Promise<string> {
   assert.ok(app, "Electron app should have loaded");
   return app.evaluate(({ clipboard }) => clipboard.readText());
@@ -238,7 +258,39 @@ describe("electron e2e: wall clipboard gestures", () => {
     await page.click(".term-host.active .xterm");
     await page.click(".term-host.active .xterm", { button: "right" });
 
-    await waitForTerminalText("RX:50415354455f52494748545f434c49434b", "right-click paste bytes");
+    const expected = "RX:50415354455f52494748545f434c49434b";
+    await waitForTerminalText(expected, "right-click paste bytes");
+    const matches = (await terminalText()).match(new RegExp(expected, "g")) ?? [];
+    assert.equal(matches.length, 1, "right-click paste should send clipboard text exactly once");
+    await assertNoDuplicateTerminalText(expected, "right-click paste bytes");
+  });
+
+  it("right-click paste coalesces duplicate contextmenu events", async (t) => {
+    if (!ptyAvailable) {
+      t.skip("node-pty not available");
+      return;
+    }
+    assert.ok(page, "Electron page should have loaded");
+
+    await setElectronClipboardText("PASTE_DUP_GUARD");
+    await page.click(".term-host.active .xterm");
+    await page.evaluate(() => {
+      const xterm = document.querySelector(".term-host.active .xterm");
+      if (!xterm) {
+        throw new Error("no .xterm element");
+      }
+      for (let i = 0; i < 2; i++) {
+        xterm.dispatchEvent(new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          button: 2,
+        }));
+      }
+    });
+
+    const expected = "RX:50415354455f4455505f4755415244";
+    await waitForTerminalText(expected, "right-click duplicate paste guard bytes");
+    await assertNoDuplicateTerminalText(expected, "duplicate right-click paste");
   });
 
   // Guards the Linux/xvfb CI failure where xterm.js populates textarea.value

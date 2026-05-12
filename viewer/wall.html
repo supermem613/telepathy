@@ -411,11 +411,24 @@
       return false;
     });
     const clipboardTarget = term.element || termHost;
+    const RIGHT_CLICK_PASTE_DEDUPE_MS = 250;
+    let rightClickPasteInFlight = false;
+    let lastRightClickPasteAt = -Infinity;
     const handleRightClick = (event) => {
       event.preventDefault();
       event.stopImmediatePropagation();
-      const op = hasTerminalCopySource(term) ? copyTerminalSelection(term) : pasteIntoTerminal(term);
-      op.catch((err) => showToast("Clipboard failed: " + (err.message || err), true));
+      if (hasTerminalCopySource(term)) {
+        copyTerminalSelection(term).catch((err) => showToast("Clipboard failed: " + (err.message || err), true));
+        return;
+      }
+      if (rightClickPasteInFlight || event.timeStamp - lastRightClickPasteAt < RIGHT_CLICK_PASTE_DEDUPE_MS) {
+        return;
+      }
+      rightClickPasteInFlight = true;
+      lastRightClickPasteAt = event.timeStamp;
+      pasteIntoTerminal(term)
+        .catch((err) => showToast("Clipboard failed: " + (err.message || err), true))
+        .finally(() => { rightClickPasteInFlight = false; });
     };
     clipboardTarget.addEventListener("contextmenu", handleRightClick, true);
     document.addEventListener("contextmenu", (event) => {

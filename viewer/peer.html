@@ -140,11 +140,24 @@
     return false;
   });
   const clipboardTarget = term.element || document.getElementById("term-host");
+  const RIGHT_CLICK_PASTE_DEDUPE_MS = 250;
+  let rightClickPasteInFlight = false;
+  let lastRightClickPasteAt = -Infinity;
   const handleRightClick = (event) => {
     event.preventDefault();
     event.stopImmediatePropagation();
-    const op = hasTerminalCopySource() ? copyTerminalSelection() : pasteIntoTerminal();
-    op.catch((err) => term.write(`\r\n\x1b[31m[telepathy] Clipboard failed: ${err.message || err}\x1b[0m\r\n`));
+    if (hasTerminalCopySource()) {
+      copyTerminalSelection().catch((err) => term.write(`\r\n\x1b[31m[telepathy] Clipboard failed: ${err.message || err}\x1b[0m\r\n`));
+      return;
+    }
+    if (rightClickPasteInFlight || event.timeStamp - lastRightClickPasteAt < RIGHT_CLICK_PASTE_DEDUPE_MS) {
+      return;
+    }
+    rightClickPasteInFlight = true;
+    lastRightClickPasteAt = event.timeStamp;
+    pasteIntoTerminal()
+      .catch((err) => term.write(`\r\n\x1b[31m[telepathy] Clipboard failed: ${err.message || err}\x1b[0m\r\n`))
+      .finally(() => { rightClickPasteInFlight = false; });
   };
   clipboardTarget.addEventListener("contextmenu", handleRightClick, true);
   document.addEventListener("contextmenu", (event) => {
