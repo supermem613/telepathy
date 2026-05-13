@@ -88,6 +88,13 @@
       .replace(/\x1b\[\d+;\d+R/g, "")
       .replace(/\x1b\[\d+n/g, "");
   }
+  function sendInput(data) {
+    const filtered = stripXtermReplies(data);
+    if (!filtered) return;
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "input", data: filtered }));
+    }
+  }
   // Returns the user-selected substring of the xterm textarea, or "".
   // xterm.js populates textarea.value for accessibility/IME on focus — a
   // collapsed cursor (selectionStart === selectionEnd) is not a copy source.
@@ -128,6 +135,12 @@
   }
   term.attachCustomKeyEventHandler((event) => {
     if (event.type !== "keydown") { return true; }
+    if (event.key === "Escape" && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      sendInput("\x1b");
+      return false;
+    }
     const key = event.key.toLowerCase();
     const isShortcut = event.ctrlKey || event.metaKey;
     if (!isShortcut || event.altKey || (key !== "c" && key !== "v")) { return true; }
@@ -163,13 +176,7 @@
   document.addEventListener("contextmenu", (event) => {
     if (document.getElementById("term-host").contains(event.target)) { handleRightClick(event); }
   }, true);
-  term.onData((data) => {
-    const filtered = stripXtermReplies(data);
-    if (!filtered) return;
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "input", data: filtered }));
-    }
-  });
+  term.onData(sendInput);
   window.addEventListener("resize", () => { try { fit.fit(); } catch (_) {} });
 })();
 </script>

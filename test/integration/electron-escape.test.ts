@@ -60,6 +60,11 @@ let app: ElectronApplication | undefined;
 let page: Page | undefined;
 let hostStderr = "";
 
+function countEscBytes(text: string): number {
+  return [...text.matchAll(/RX:([0-9a-f]*)/g)]
+    .reduce((count, match) => count + ((match[1]?.match(/1b/g) || []).length), 0);
+}
+
 before(async () => {
   if (!ptyAvailable) {
     return;
@@ -167,7 +172,7 @@ describe("electron e2e: Escape key reaches wrapped child as ESC byte", () => {
 
     // Snapshot current output so we can detect NEW RX:1b lines.
     const beforeText = await page.evaluate(() => document.body.innerText);
-    const beforeCount = (beforeText.match(/RX:1b/g) || []).length;
+    const beforeCount = countEscBytes(beforeText);
 
     // Press Escape — this is the key that was getting lost.
     await page.keyboard.press("Escape");
@@ -175,8 +180,96 @@ describe("electron e2e: Escape key reaches wrapped child as ESC byte", () => {
     // Assert a NEW RX:1b appeared (not just the one from the previous test).
     await waitForAsync(async () => {
       const text = await page!.evaluate(() => document.body.innerText);
-      const afterCount = (text.match(/RX:1b/g) || []).length;
+      const afterCount = countEscBytes(text);
       return afterCount > beforeCount;
     }, { timeout: 5_000, what: "new RX:1b after Escape-from-tabbar (ESC byte forwarded after focus restoration)" });
+  });
+
+  it("repeated Escape presses each send a new ESC byte", async (t) => {
+    if (!ptyAvailable) {
+      t.skip("node-pty not available");
+      return;
+    }
+    assert.ok(page, "Electron page should have loaded");
+
+    await page.waitForSelector(".tab", { timeout: 10_000 });
+    await waitForAsync(async () => {
+      const text = await page!.evaluate(() => document.body.innerText);
+      return text.includes("RAW_ECHO_READY");
+    }, { timeout: 10_000, what: "RAW_ECHO_READY banner in xterm" });
+
+    await page.click(".term-host.active");
+    const beforeText = await page.evaluate(() => document.body.innerText);
+    const beforeCount = countEscBytes(beforeText);
+
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+
+    await waitForAsync(async () => {
+      const text = await page!.evaluate(() => document.body.innerText);
+      const afterCount = countEscBytes(text);
+      return afterCount >= beforeCount + 3;
+    }, { timeout: 5_000, what: "three new RX:1b lines after repeated Escape presses" });
+  });
+
+  it("held Escape key repeat sends each repeated ESC byte", async (t) => {
+    if (!ptyAvailable) {
+      t.skip("node-pty not available");
+      return;
+    }
+    assert.ok(page, "Electron page should have loaded");
+
+    await page.waitForSelector(".tab", { timeout: 10_000 });
+    await waitForAsync(async () => {
+      const text = await page!.evaluate(() => document.body.innerText);
+      return text.includes("RAW_ECHO_READY");
+    }, { timeout: 10_000, what: "RAW_ECHO_READY banner in xterm" });
+
+    await page.click(".term-host.active");
+    const beforeText = await page.evaluate(() => document.body.innerText);
+    const beforeCount = countEscBytes(beforeText);
+
+    await page.keyboard.down("Escape");
+    await page.keyboard.down("Escape");
+    await page.keyboard.down("Escape");
+    await page.keyboard.up("Escape");
+
+    await waitForAsync(async () => {
+      const text = await page!.evaluate(() => document.body.innerText);
+      const afterCount = countEscBytes(text);
+      return afterCount >= beforeCount + 3;
+    }, { timeout: 5_000, what: "three new RX:1b lines after held Escape key repeat" });
+  });
+
+  it("repeated Escape presses after tab focus each send a new ESC byte", async (t) => {
+    if (!ptyAvailable) {
+      t.skip("node-pty not available");
+      return;
+    }
+    assert.ok(page, "Electron page should have loaded");
+
+    await page.waitForSelector(".tab", { timeout: 10_000 });
+    await waitForAsync(async () => {
+      const text = await page!.evaluate(() => document.body.innerText);
+      return text.includes("RAW_ECHO_READY");
+    }, { timeout: 10_000, what: "RAW_ECHO_READY banner in xterm" });
+
+    await page.click("#tabbar");
+    const focusedBefore = await page.evaluate(() => document.activeElement?.tagName);
+    assert.notEqual(focusedBefore, "TEXTAREA", "xterm should have lost focus after clicking tabbar");
+
+    const beforeText = await page.evaluate(() => document.body.innerText);
+    const beforeCount = countEscBytes(beforeText);
+
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+
+    await waitForAsync(async () => {
+      const text = await page!.evaluate(() => document.body.innerText);
+      const afterCount = countEscBytes(text);
+      return afterCount >= beforeCount + 3;
+    }, { timeout: 5_000, what: "three new RX:1b lines after repeated Escape-from-tabbar" });
   });
 });

@@ -396,9 +396,15 @@
   function hasTerminalCopySource(term) {
     return term.hasSelection() || !!window.getSelection().toString() || !!getTextareaSelection(term);
   }
-  function installTerminalClipboard(termHost, term) {
+  function installTerminalClipboard(termHost, term, sendInput) {
     term.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown") { return true; }
+      if (event.key === "Escape" && !event.ctrlKey && !event.altKey && !event.metaKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        sendInput("\x1b");
+        return false;
+      }
       const key = event.key.toLowerCase();
       const isShortcut = event.ctrlKey || event.metaKey;
       if (!isShortcut || event.altKey || (key !== "c" && key !== "v")) { return true; }
@@ -585,7 +591,6 @@
       fit = new window.FitAddon.FitAddon();
       term.loadAddon(fit);
       term.open(termHost);
-      installTerminalClipboard(termHost, term);
       // NOTE: termHost is display:none until activate() is called. We
       // intentionally don't fit() here — fit against a hidden element
       // returns garbage dimensions (~80x24 default) and would tell the
@@ -672,13 +677,15 @@
       // setLocalPty had fired). Once the host's shell spawns, frames
       // start arriving AND keystrokes start flowing — no need to detect
       // the capability flip on the client.
-      term.onData((data) => {
+      const sendInput = (data) => {
         const filtered = stripXtermReplies(data);
         if (!filtered) { return; }
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "input", data: filtered }));
         }
-      });
+      };
+      installTerminalClipboard(termHost, term, sendInput);
+      term.onData(sendInput);
       tabs.set(peer.alias, entry);
       return entry;
     } catch (err) {
