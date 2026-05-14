@@ -23,7 +23,7 @@ import { connectPeer, disconnectPeer, getPeerOrThrow } from "./api.js";
 import { sendRequest } from "./peers.js";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_VIEWER_PORT } from "./protocol.js";
-import type { SpawnHostAckMessage } from "./protocol.js";
+import type { PtyClipboardImagePasteAckMessage, SpawnHostAckMessage } from "./protocol.js";
 
 export type ViewerState = {
   server: HttpServer;
@@ -230,7 +230,7 @@ function attachWatcher(alias: string, peer: Peer, ws: WebSocket, opts: { deferRe
     subscribeRemotePty(peer, randomUUID());
   }
   ws.on("message", (raw) => {
-    let msg: { type: string; data?: string; cols?: number; rows?: number };
+    let msg: { type: string; data?: string; cols?: number; rows?: number; id?: string; mediaType?: string; dataBase64?: string };
     try {
       msg = JSON.parse(raw.toString("utf8")) as typeof msg;
     } catch {
@@ -241,6 +241,42 @@ function attachWatcher(alias: string, peer: Peer, ws: WebSocket, opts: { deferRe
       // the wire (the host will decode and inject directly into the PTY).
       const dataBase64 = Buffer.from(msg.data, "utf8").toString("base64");
       sendRemoteInput(peer, dataBase64);
+    } else if (
+      msg.type === "pty_clipboard_image_paste"
+      && typeof msg.id === "string"
+      && typeof msg.mediaType === "string"
+      && typeof msg.dataBase64 === "string"
+    ) {
+      if (msg.mediaType !== "image/png" && msg.mediaType !== "image/jpeg") {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: "pty_clipboard_image_paste_result",
+            id: msg.id,
+            ok: false,
+            error: `unsupported clipboard image type: ${msg.mediaType}`,
+          }));
+        }
+        return;
+      }
+      void sendRequest<PtyClipboardImagePasteAckMessage>(
+        peer,
+        {
+          type: "pty_clipboard_image_paste",
+          id: msg.id,
+          mediaType: msg.mediaType,
+          dataBase64: msg.dataBase64,
+        },
+        30_000,
+      ).then((ack) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "pty_clipboard_image_paste_result", id: msg.id, ok: ack.ok, error: ack.error }));
+        }
+      }).catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "pty_clipboard_image_paste_result", id: msg.id, ok: false, error: message }));
+        }
+      });
     } else if (msg.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
       // Browser xterm fitted/resized — tell the host's PTY so TUIs render
       // for the right viewport (Copilot CLI's bottom-anchored prompt is

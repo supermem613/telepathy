@@ -20,11 +20,13 @@ import type {
   HelloMessage,
   HelloAckMessage,
   Message,
+  PtyClipboardImagePasteMessage,
 } from "./protocol.js";
 import type { Frame } from "./transport.js";
 import { isDebug } from "./debug.js";
 import { buildReplayWithModes } from "./dec-modes.js";
 import { handleSpawnHostRequest } from "./spawn-host.js";
+import { writeImageToClipboard } from "./clipboard.js";
 
 export type LocalPty = {
   state: {
@@ -334,6 +336,18 @@ function handleFrameForPeer(peer: Peer, frame: Message): void {
         localPty.injectInput(frame.dataBase64);
       }
       return;
+    case "pty_clipboard_image_paste":
+      void handleClipboardImagePaste(peer, frame);
+      return;
+    case "pty_clipboard_image_paste_ack": {
+      const pending = peer.pending.get(frame.id);
+      if (pending) {
+        peer.pending.delete(frame.id);
+        clearTimeout(pending.timer);
+        pending.resolve(frame);
+      }
+      return;
+    }
     case "pty_input_resize":
       // Remote peer (viewer) is telling us their xterm dimensions.
       // Resize our local PTY to match so TUIs render for the right
@@ -398,6 +412,23 @@ function handleFrameForPeer(peer: Peer, frame: Message): void {
     case "hello_ack":
       // Already handled in adopt*; ignore late arrivals.
       return;
+  }
+}
+
+async function handleClipboardImagePaste(peer: Peer, frame: PtyClipboardImagePasteMessage): Promise<void> {
+  try {
+    if (!localPty) {
+      throw new Error("no local PTY on this host");
+    }
+    await writeImageToClipboard({
+      mediaType: frame.mediaType,
+      dataBase64: frame.dataBase64,
+    });
+    localPty.injectInput(Buffer.from([0x16]).toString("base64"));
+    sendFrame(peer.socket, { type: "pty_clipboard_image_paste_ack", id: frame.id, ok: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    sendFrame(peer.socket, { type: "pty_clipboard_image_paste_ack", id: frame.id, ok: false, error: message });
   }
 }
 

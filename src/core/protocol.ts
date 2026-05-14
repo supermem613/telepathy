@@ -90,6 +90,20 @@ export type PtyInputMessage = {
   dataBase64: string;       // raw bytes to inject into the PTY
 };
 
+export type PtyClipboardImagePasteMessage = {
+  type: "pty_clipboard_image_paste";
+  id: string;
+  mediaType: "image/png" | "image/jpeg";
+  dataBase64: string;
+};
+
+export type PtyClipboardImagePasteAckMessage = {
+  type: "pty_clipboard_image_paste_ack";
+  id: string;
+  ok: boolean;
+  error?: string;
+};
+
 export type PtyResizeMessage = {
   type: "pty_resize";
   cols: number;
@@ -148,6 +162,8 @@ export type Message =
   | PtySubscribeAckMessage
   | PtyFrameMessage
   | PtyInputMessage
+  | PtyClipboardImagePasteMessage
+  | PtyClipboardImagePasteAckMessage
   | PtyResizeMessage
   | PtyInputResizeMessage
   | PtyUnsubscribeMessage

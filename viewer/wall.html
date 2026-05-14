@@ -388,15 +388,62 @@
     return true;
   }
   async function pasteIntoTerminal(term) {
+    const image = await readClipboardImageFromNavigator().catch(() => null);
+    if (image) {
+      await term._telepathyPasteImage(image);
+      return true;
+    }
     const text = await navigator.clipboard.readText();
     if (!text) { return false; }
     term.paste(text);
     return true;
   }
+  function requestId() {
+    return (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + "-" + Math.random();
+  }
+  function imageFileFromClipboardData(clipboardData) {
+    if (!clipboardData || !clipboardData.items) { return null; }
+    for (const item of clipboardData.items) {
+      if (item.kind === "file" && isSupportedClipboardImageType(item.type)) {
+        return item.getAsFile();
+      }
+    }
+    return null;
+  }
+  function isSupportedClipboardImageType(type) {
+    return type === "image/png" || type === "image/jpeg";
+  }
+  function fileToImagePayload(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result || "");
+        const comma = result.indexOf(",");
+        resolve({
+          mediaType: file.type || "image/png",
+          dataBase64: comma >= 0 ? result.slice(comma + 1) : result,
+        });
+      };
+      reader.onerror = () => reject(reader.error || new Error("failed to read pasted image"));
+      reader.readAsDataURL(file);
+    });
+  }
+  async function readClipboardImageFromNavigator() {
+    if (!navigator.clipboard || typeof navigator.clipboard.read !== "function") { return null; }
+    const items = await navigator.clipboard.read();
+    for (const item of items) {
+      const type = item.types.find(isSupportedClipboardImageType);
+      if (type) {
+        return fileToImagePayload(await item.getType(type));
+      }
+    }
+    return null;
+  }
   function hasTerminalCopySource(term) {
     return term.hasSelection() || !!window.getSelection().toString() || !!getTextareaSelection(term);
   }
-  function installTerminalClipboard(termHost, term, sendInput) {
+  function installTerminalClipboard(termHost, term, sendInput, sendClipboardImagePaste) {
+    term._telepathyPasteImage = sendClipboardImagePaste;
     term.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown") { return true; }
       if (event.key === "Escape" && !event.ctrlKey && !event.altKey && !event.metaKey) {
@@ -436,7 +483,20 @@
         .catch((err) => showToast("Clipboard failed: " + (err.message || err), true))
         .finally(() => { rightClickPasteInFlight = false; });
     };
+    const handlePaste = (event) => {
+      const file = imageFileFromClipboardData(event.clipboardData);
+      if (!file) { return; }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      fileToImagePayload(file)
+        .then(sendClipboardImagePaste)
+        .catch((err) => showToast("Image paste failed: " + (err.message || err), true));
+    };
+    clipboardTarget.addEventListener("paste", handlePaste, true);
     clipboardTarget.addEventListener("contextmenu", handleRightClick, true);
+    document.addEventListener("paste", (event) => {
+      if (termHost.contains(event.target)) { handlePaste(event); }
+    }, true);
     document.addEventListener("contextmenu", (event) => {
       if (termHost.contains(event.target)) { handleRightClick(event); }
     }, true);
@@ -684,8 +744,45 @@
           ws.send(JSON.stringify({ type: "input", data: filtered }));
         }
       };
-      installTerminalClipboard(termHost, term, sendInput);
+      const pendingImagePastes = new Map();
+      const sendClipboardImagePaste = (image) => new Promise((resolve, reject) => {
+        if (ws.readyState !== WebSocket.OPEN) {
+          reject(new Error("terminal connection is not open"));
+          return;
+        }
+        const id = requestId();
+        const timer = setTimeout(() => {
+          pendingImagePastes.delete(id);
+          reject(new Error("image paste timed out"));
+        }, 30_000);
+        pendingImagePastes.set(id, { resolve, reject, timer });
+        ws.send(JSON.stringify({
+          type: "pty_clipboard_image_paste",
+          id,
+          mediaType: image.mediaType,
+          dataBase64: image.dataBase64,
+        }));
+      });
+      installTerminalClipboard(termHost, term, sendInput, sendClipboardImagePaste);
       term.onData(sendInput);
+      const previousOnMessage = ws.onmessage;
+      ws.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === "pty_clipboard_image_paste_result") {
+          const pending = pendingImagePastes.get(msg.id);
+          if (pending) {
+            pendingImagePastes.delete(msg.id);
+            clearTimeout(pending.timer);
+            if (msg.ok) {
+              pending.resolve(true);
+            } else {
+              pending.reject(new Error(msg.error || "image paste failed"));
+            }
+          }
+          return;
+        }
+        previousOnMessage(ev);
+      };
       tabs.set(peer.alias, entry);
       return entry;
     } catch (err) {

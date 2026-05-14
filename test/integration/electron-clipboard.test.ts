@@ -11,6 +11,7 @@ import { dirname, resolve } from "node:path";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const RAW_ECHO = resolve(dirname(fileURLToPath(import.meta.url)), "raw-echo.cjs");
+const ONE_PIXEL_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
 
 let ptyAvailable = true;
 try {
@@ -141,6 +142,11 @@ async function setElectronClipboardText(text: string): Promise<void> {
   await app.evaluate(({ clipboard }, value) => clipboard.writeText(value), text);
 }
 
+async function electronClipboardHasImage(): Promise<boolean> {
+  assert.ok(app, "Electron app should have loaded");
+  return app.evaluate(({ clipboard }) => !clipboard.readImage().isEmpty());
+}
+
 async function pressTerminalShortcut(key: "c" | "v"): Promise<void> {
   assert.ok(page, "Electron page should have loaded");
   await page.evaluate((shortcutKey) => {
@@ -230,6 +236,46 @@ describe("electron e2e: wall clipboard gestures", () => {
     await pressTerminalShortcut("v");
 
     await waitForTerminalText("RX:50415354455f4354524c5f56", "Ctrl+V pasted bytes");
+  });
+
+  it("pasting a clipboard image forwards Copilot's attachment shortcut to the host prompt", async (t) => {
+    if (!ptyAvailable) {
+      t.skip("node-pty not available");
+      return;
+    }
+    if (process.platform !== "win32") {
+      t.skip("host image clipboard paste is currently Windows-only");
+      return;
+    }
+    assert.ok(page, "Electron page should have loaded");
+    assert.ok(app, "Electron app should have loaded");
+
+    await app.evaluate(({ clipboard }) => clipboard.clear());
+    await page.evaluate((base64) => {
+      const xterm = document.querySelector(".term-host.active .xterm");
+      if (!xterm) {
+        throw new Error("no active xterm element");
+      }
+      const bytes = Uint8Array.from(atob(base64), (ch) => ch.charCodeAt(0));
+      const file = new File([bytes], "screenshot.png", { type: "image/png" });
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(file);
+      const event = new Event("paste", {
+        bubbles: true,
+        cancelable: true,
+      });
+      Object.defineProperty(event, "clipboardData", { value: dataTransfer });
+      xterm.dispatchEvent(event);
+    }, ONE_PIXEL_PNG_BASE64);
+
+    await waitForAsync(async () => {
+      const text = await terminalText();
+      if (text.includes("Image paste failed") || text.includes("Clipboard failed")) {
+        throw new Error(text);
+      }
+      return text.includes("RX:16");
+    }, { timeout: 10_000, what: "image paste Ctrl+V shortcut" });
+    assert.equal(await electronClipboardHasImage(), true, "host clipboard should contain the pasted image");
   });
 
   it("right-click copies selected terminal text", async (t) => {
