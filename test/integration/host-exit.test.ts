@@ -22,6 +22,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { _electron as electron, type ElectronApplication } from "playwright";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { findElectronBin } from "../../src/commands/find-electron.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const ECHO_BOT = resolve(dirname(fileURLToPath(import.meta.url)), "echo-bot.cjs");
@@ -32,6 +33,8 @@ try {
 } catch {
   ptyAvailable = false;
 }
+
+const electronBin = findElectronBin(ROOT);
 
 const livePieces: { host?: ChildProcess; app?: ElectronApplication } = {};
 
@@ -94,6 +97,7 @@ async function runHostUntilChildExits(opts: { withPeer: boolean }): Promise<{ st
     // releases the hold automatically (no keypress needed) and gives
     // us the full subscriber path the user has when the crash hits.
     livePieces.app = await electron.launch({
+      executablePath: electronBin!,
       args: [resolve(ROOT, "electron/main.cjs"), `--token=${token}`],
       cwd: ROOT,
       env: { ...process.env, ELECTRON_DISABLE_SANDBOX: "1" },
@@ -152,8 +156,8 @@ describe("host exits cleanly when the wrapped child terminates", () => {
   });
 
   it("no EAGAIN / Unhandled 'error' event when an Electron wall peer is attached", async (t) => {
-    if (!ptyAvailable) {
-      t.skip("node-pty not available");
+    if (!ptyAvailable || !electronBin) {
+      t.skip(!ptyAvailable ? "node-pty not available" : "electron not available");
       return;
     }
     const r = await runHostUntilChildExits({ withPeer: true });

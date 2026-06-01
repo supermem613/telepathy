@@ -11,14 +11,38 @@ import { join } from "node:path";
 import { minimatch } from "minimatch";
 import { execSync } from "node:child_process";
 
-const pattern = process.argv[2] || "test/**/*.test.ts";
-const baseDir = pattern.split(/[/\\]/)[0] || ".";
-const allFiles = readdirSync(baseDir, { recursive: true })
-  .map((f) => join(baseDir, f).split("\\").join("/"))
-  .filter((f) => minimatch(f, pattern));
+// When the shell (sh/bash) expands a glob before passing to node, every
+// matched file arrives as a separate argv entry and process.argv[2] is the
+// first file path, not the original glob pattern. Detect this: if all extra
+// arguments contain no wildcard characters they are already-expanded file
+// paths and should be used verbatim. A single argument that contains a '*'
+// (or '?') is treated as a glob pattern and expanded with minimatch.
+const args = process.argv.slice(2);
+const defaultPattern = "test/**/*.test.ts";
+
+let allFiles;
+if (args.length === 0) {
+  // No args: expand the default pattern.
+  const baseDir = defaultPattern.split(/[/\\]/)[0] || ".";
+  allFiles = readdirSync(baseDir, { recursive: true })
+    .map((f) => join(baseDir, f).split("\\").join("/"))
+    .filter((f) => minimatch(f, defaultPattern));
+} else if (args.length === 1 && (args[0].includes("*") || args[0].includes("?"))) {
+  // Single glob pattern (shell did not expand it, e.g. quoted or Windows):
+  // expand it via minimatch.
+  const pattern = args[0];
+  const baseDir = pattern.split(/[/\\]/)[0] || ".";
+  allFiles = readdirSync(baseDir, { recursive: true })
+    .map((f) => join(baseDir, f).split("\\").join("/"))
+    .filter((f) => minimatch(f, pattern));
+} else {
+  // Shell already expanded the glob: every arg is a concrete file path.
+  allFiles = args.map((f) => f.split("\\").join("/"));
+}
 
 if (allFiles.length === 0) {
-  console.error(`No test files found matching: ${pattern}`);
+  const label = args.length === 1 ? args[0] : `${args.length} file(s)`;
+  console.error(`No test files found matching: ${label}`);
   process.exit(1);
 }
 

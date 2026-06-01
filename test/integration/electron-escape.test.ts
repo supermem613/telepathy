@@ -10,6 +10,7 @@ import { describe, it, before, after } from "node:test";
 import { strict as assert } from "node:assert";
 import { spawn, type ChildProcess } from "node:child_process";
 import { _electron as electron, type ElectronApplication, type Page } from "playwright";
+import { findElectronBin } from "../../src/commands/find-electron.js";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
@@ -22,6 +23,8 @@ try {
 } catch {
   ptyAvailable = false;
 }
+
+const electronBin = findElectronBin(ROOT);
 
 async function waitForAsync(
   predicate: () => Promise<boolean>,
@@ -66,7 +69,7 @@ function countEscBytes(text: string): number {
 }
 
 before(async () => {
-  if (!ptyAvailable) {
+  if (!ptyAvailable || !electronBin) {
     return;
   }
   const port = 18000 + Math.floor(Math.random() * 2000);
@@ -97,6 +100,7 @@ before(async () => {
   await new Promise((r) => setTimeout(r, 500));
 
   app = await electron.launch({
+    executablePath: electronBin!,
     args: [resolve(ROOT, "electron/main.cjs"), `--token=${token}`],
     cwd: ROOT,
     env: { ...process.env, ELECTRON_DISABLE_SANDBOX: "1" },
@@ -121,8 +125,8 @@ after(async () => {
 
 describe("electron e2e: Escape key reaches wrapped child as ESC byte", () => {
   it("pressing Escape in the wall sends 0x1b to the PTY child", async (t) => {
-    if (!ptyAvailable) {
-      t.skip("node-pty not available");
+    if (!ptyAvailable || !electronBin) {
+      t.skip(!ptyAvailable ? "node-pty not available" : "electron not available");
       return;
     }
     assert.ok(page, "Electron page should have loaded");
@@ -152,8 +156,8 @@ describe("electron e2e: Escape key reaches wrapped child as ESC byte", () => {
   });
 
   it("Escape after clicking the tab bar still reaches the PTY child", async (t) => {
-    if (!ptyAvailable) {
-      t.skip("node-pty not available");
+    if (!ptyAvailable || !electronBin) {
+      t.skip(!ptyAvailable ? "node-pty not available" : "electron not available");
       return;
     }
     assert.ok(page, "Electron page should have loaded");
@@ -186,8 +190,8 @@ describe("electron e2e: Escape key reaches wrapped child as ESC byte", () => {
   });
 
   it("repeated Escape presses each send a new ESC byte", async (t) => {
-    if (!ptyAvailable) {
-      t.skip("node-pty not available");
+    if (!ptyAvailable || !electronBin) {
+      t.skip(!ptyAvailable ? "node-pty not available" : "electron not available");
       return;
     }
     assert.ok(page, "Electron page should have loaded");
@@ -214,8 +218,8 @@ describe("electron e2e: Escape key reaches wrapped child as ESC byte", () => {
   });
 
   it("held Escape key repeat sends each repeated ESC byte", async (t) => {
-    if (!ptyAvailable) {
-      t.skip("node-pty not available");
+    if (!ptyAvailable || !electronBin) {
+      t.skip(!ptyAvailable ? "node-pty not available" : "electron not available");
       return;
     }
     assert.ok(page, "Electron page should have loaded");
@@ -243,8 +247,8 @@ describe("electron e2e: Escape key reaches wrapped child as ESC byte", () => {
   });
 
   it("repeated Escape presses after tab focus each send a new ESC byte", async (t) => {
-    if (!ptyAvailable) {
-      t.skip("node-pty not available");
+    if (!ptyAvailable || !electronBin) {
+      t.skip(!ptyAvailable ? "node-pty not available" : "electron not available");
       return;
     }
     assert.ok(page, "Electron page should have loaded");

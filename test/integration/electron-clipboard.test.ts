@@ -8,6 +8,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { _electron as electron, type ElectronApplication, type Page } from "playwright";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { findElectronBin } from "../../src/commands/find-electron.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const RAW_ECHO = resolve(dirname(fileURLToPath(import.meta.url)), "raw-echo.cjs");
@@ -19,6 +20,8 @@ try {
 } catch {
   ptyAvailable = false;
 }
+
+const electronBin = findElectronBin(ROOT);
 
 async function waitForAsync(predicate: () => Promise<boolean>, opts: { timeout?: number; interval?: number; what?: string } = {}): Promise<void> {
   const timeout = opts.timeout ?? 30_000;
@@ -52,7 +55,7 @@ let page: Page | undefined;
 let hostStderr = "";
 
 before(async () => {
-  if (!ptyAvailable) {
+  if (!ptyAvailable || !electronBin) {
     return;
   }
   const port = 20000 + Math.floor(Math.random() * 2000);
@@ -81,6 +84,7 @@ before(async () => {
   await new Promise((r) => setTimeout(r, 500));
 
   app = await electron.launch({
+    executablePath: electronBin!,
     args: [resolve(ROOT, "electron/main.cjs"), `--token=${token}`],
     cwd: ROOT,
     env: { ...process.env, ELECTRON_DISABLE_SANDBOX: "1" },
@@ -208,8 +212,8 @@ async function activeTermDebugState(): Promise<unknown> {
 
 describe("electron e2e: wall clipboard gestures", () => {
   it("Ctrl+C copies selected terminal text instead of sending ETX to the PTY", async (t) => {
-    if (!ptyAvailable) {
-      t.skip("node-pty not available");
+    if (!ptyAvailable || !electronBin) {
+      t.skip(!ptyAvailable ? "node-pty not available" : "electron not available");
       return;
     }
     assert.ok(page, "Electron page should have loaded");
@@ -225,8 +229,8 @@ describe("electron e2e: wall clipboard gestures", () => {
   });
 
   it("Ctrl+V pastes clipboard text into the connected terminal", async (t) => {
-    if (!ptyAvailable) {
-      t.skip("node-pty not available");
+    if (!ptyAvailable || !electronBin) {
+      t.skip(!ptyAvailable ? "node-pty not available" : "electron not available");
       return;
     }
     assert.ok(page, "Electron page should have loaded");
@@ -239,8 +243,8 @@ describe("electron e2e: wall clipboard gestures", () => {
   });
 
   it("pasting a clipboard image forwards Copilot's attachment shortcut to the host prompt", async (t) => {
-    if (!ptyAvailable) {
-      t.skip("node-pty not available");
+    if (!ptyAvailable || !electronBin) {
+      t.skip(!ptyAvailable ? "node-pty not available" : "electron not available");
       return;
     }
     if (process.platform !== "win32") {
@@ -279,8 +283,8 @@ describe("electron e2e: wall clipboard gestures", () => {
   });
 
   it("right-click copies selected terminal text", async (t) => {
-    if (!ptyAvailable) {
-      t.skip("node-pty not available");
+    if (!ptyAvailable || !electronBin) {
+      t.skip(!ptyAvailable ? "node-pty not available" : "electron not available");
       return;
     }
     assert.ok(page, "Electron page should have loaded");
@@ -294,8 +298,8 @@ describe("electron e2e: wall clipboard gestures", () => {
   });
 
   it("right-click paste sends clipboard text into the connected terminal", async (t) => {
-    if (!ptyAvailable) {
-      t.skip("node-pty not available");
+    if (!ptyAvailable || !electronBin) {
+      t.skip(!ptyAvailable ? "node-pty not available" : "electron not available");
       return;
     }
     assert.ok(page, "Electron page should have loaded");
@@ -312,8 +316,8 @@ describe("electron e2e: wall clipboard gestures", () => {
   });
 
   it("right-click paste coalesces duplicate contextmenu events", async (t) => {
-    if (!ptyAvailable) {
-      t.skip("node-pty not available");
+    if (!ptyAvailable || !electronBin) {
+      t.skip(!ptyAvailable ? "node-pty not available" : "electron not available");
       return;
     }
     assert.ok(page, "Electron page should have loaded");
@@ -345,8 +349,8 @@ describe("electron e2e: wall clipboard gestures", () => {
   // source, routing right-click to copy instead of paste. The fix requires a
   // real text selection (selectionStart !== selectionEnd) in the textarea.
   it("right-click pastes when textarea has accessibility text but no selection", async (t) => {
-    if (!ptyAvailable) {
-      t.skip("node-pty not available");
+    if (!ptyAvailable || !electronBin) {
+      t.skip(!ptyAvailable ? "node-pty not available" : "electron not available");
       return;
     }
     assert.ok(page, "Electron page should have loaded");
@@ -377,8 +381,8 @@ describe("electron e2e: wall clipboard gestures", () => {
   // handlers synchronously, and async functions execute up to their first await
   // before yielding.
   it("right-click copy clears hasTerminalCopySource synchronously", async (t) => {
-    if (!ptyAvailable) {
-      t.skip("node-pty not available");
+    if (!ptyAvailable || !electronBin) {
+      t.skip(!ptyAvailable ? "node-pty not available" : "electron not available");
       return;
     }
     assert.ok(page, "Electron page should have loaded");
@@ -427,8 +431,8 @@ describe("electron e2e: wall clipboard gestures", () => {
   // the next operation sets a new clipboard value — overwriting it with stale
   // text. The fix: skip writeText when execCommand already succeeded.
   it("right-click copy does not call async writeText when execCommand succeeds", async (t) => {
-    if (!ptyAvailable) {
-      t.skip("node-pty not available");
+    if (!ptyAvailable || !electronBin) {
+      t.skip(!ptyAvailable ? "node-pty not available" : "electron not available");
       return;
     }
     assert.ok(page, "Electron page should have loaded");

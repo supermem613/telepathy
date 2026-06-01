@@ -2,6 +2,7 @@ import { describe, it, before, after } from "node:test";
 import { strict as assert } from "node:assert";
 import { spawn, type ChildProcess } from "node:child_process";
 import { _electron as electron, type ElectronApplication, type Page } from "playwright";
+import { findElectronBin } from "../../src/commands/find-electron.js";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
@@ -14,6 +15,8 @@ try {
 } catch {
   ptyAvailable = false;
 }
+
+const electronBin = findElectronBin(ROOT);
 
 async function waitForAsync(predicate: () => Promise<boolean>, opts: { timeout?: number; interval?: number; what?: string } = {}): Promise<void> {
   const timeout = opts.timeout ?? 30_000;
@@ -47,7 +50,7 @@ let page: Page | undefined;
 let hostStderr = "";
 
 before(async () => {
-  if (!ptyAvailable) {
+  if (!ptyAvailable || !electronBin) {
     return;
   }
   const port = 22000 + Math.floor(Math.random() * 2000);
@@ -76,6 +79,7 @@ before(async () => {
   await new Promise((r) => setTimeout(r, 500));
 
   app = await electron.launch({
+    executablePath: electronBin!,
     args: [resolve(ROOT, "electron/main.cjs"), `--token=${token}`],
     cwd: ROOT,
     env: { ...process.env, ELECTRON_DISABLE_SANDBOX: "1" },
@@ -105,8 +109,8 @@ after(async () => {
 
 describe("electron e2e: recorded Copilot CLI trace visual replay", () => {
   it("renders the real Copilot CLI trace in the wall xterm without falling out of alt-screen layout", async (t) => {
-    if (!ptyAvailable) {
-      t.skip("node-pty not available");
+    if (!ptyAvailable || !electronBin) {
+      t.skip(!ptyAvailable ? "node-pty not available" : "electron not available");
       return;
     }
     assert.ok(page, "Electron page should have loaded");
