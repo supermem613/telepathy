@@ -9,7 +9,7 @@ import { readdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { minimatch } from "minimatch";
-import { execSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 
 // When the shell (sh/bash) expands a glob before passing to node, every
 // matched file arrives as a separate argv entry and process.argv[2] is the
@@ -76,15 +76,19 @@ let totalFail = 0;
 const failedFiles = [];
 try {
   for (const file of allFiles) {
-    const cmd = `node --import tsx --test-reporter=tap ${file}`;
     let stdout = "";
     let fileFailed = false;
-    try {
-      stdout = execSync(cmd, { env: envForFile(file), encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
-    } catch (err) {
+    const result = spawnSync(
+      process.execPath,
+      ["--import", "tsx", "--test-reporter=tap", file],
+      { env: envForFile(file), encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] }
+    );
+    if (result.status !== 0 || result.error) {
       fileFailed = true;
-      stdout = (err.stdout ?? "").toString();
+      stdout = result.stdout ?? "";
       failedFiles.push(file);
+    } else {
+      stdout = result.stdout ?? "";
     }
     const tests = parseInt((stdout.match(/^# tests (\d+)/m) ?? [])[1] ?? "0", 10);
     const pass  = parseInt((stdout.match(/^# pass (\d+)/m)  ?? [])[1] ?? "0", 10);
