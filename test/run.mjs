@@ -51,6 +51,12 @@ let totalPass = 0;
 let totalFail = 0;
 const failedFiles = [];
 try {
+  if (allFiles.some((file) => file.includes("integration"))) {
+    execSync("node --import tsx test/support/ensure-electron.ts", {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+  }
   for (const file of allFiles) {
     const cmd = `node --import tsx --test-reporter=tap ${file}`;
     let stdout = "";
