@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { installElectronWithWait } from "../support/ensure-electron.js";
+import { DEFAULT_ELECTRON_INSTALL_TIMEOUT_MS, installElectronWithWait } from "../support/ensure-electron.js";
 
 function makeFakeElectronDir(installJs: string): string {
   const root = mkdtempSync(join(tmpdir(), "telepathy-electron-fake-"));
@@ -14,6 +14,13 @@ function makeFakeElectronDir(installJs: string): string {
 }
 
 describe("ensure-electron installer guard", () => {
+  it("allows slow cold Electron downloads on fresh Linux CI runners", () => {
+    assert.ok(
+      DEFAULT_ELECTRON_INSTALL_TIMEOUT_MS >= 600_000,
+      "Electron preflight must allow a cold CI download to exceed the old 3 minute failure window",
+    );
+  });
+
   it("documents the failure mode: install.js can exit 0 without path.txt", () => {
     const electronDir = makeFakeElectronDir("");
     try {

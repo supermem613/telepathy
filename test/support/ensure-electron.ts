@@ -3,6 +3,8 @@ import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+export const DEFAULT_ELECTRON_INSTALL_TIMEOUT_MS = 600_000;
+
 export function hasElectronBinary(electronDir: string): boolean {
   const pathFile = join(electronDir, "path.txt");
   if (!existsSync(pathFile)) {
@@ -15,12 +17,13 @@ export function hasElectronBinary(electronDir: string): boolean {
   return existsSync(join(electronDir, "dist", executable));
 }
 
-export function installElectronWithWait(electronDir: string, timeoutMs = 180_000): void {
+export function installElectronWithWait(electronDir: string, timeoutMs = DEFAULT_ELECTRON_INSTALL_TIMEOUT_MS): void {
   const installScript = `
 const fs = require("node:fs");
 const path = require("node:path");
 const timeoutMs = Number(process.argv[1]);
 const start = Date.now();
+let lastProgress = start;
 const pathFile = path.join(process.cwd(), "path.txt");
 require(path.join(process.cwd(), "install.js"));
 const poll = () => {
@@ -29,7 +32,15 @@ const poll = () => {
     if (rel && fs.existsSync(path.join(process.cwd(), "dist", rel))) {
       process.exit(0);
     }
-  } catch {}
+  } catch (err) {
+    if (err.code !== "ENOENT") {
+      throw err;
+    }
+  }
+  if (Date.now() - lastProgress >= 60_000) {
+    console.error("Still waiting for Electron install to produce path.txt");
+    lastProgress = Date.now();
+  }
   if (Date.now() - start >= timeoutMs) {
     console.error("Timed out waiting for Electron install to produce path.txt");
     process.exit(1);
@@ -47,7 +58,7 @@ poll();
   }
 }
 
-export function ensureElectronBinary(projectRoot: string, timeoutMs = 180_000): void {
+export function ensureElectronBinary(projectRoot: string, timeoutMs = DEFAULT_ELECTRON_INSTALL_TIMEOUT_MS): void {
   const electronDir = join(projectRoot, "node_modules", "electron");
   if (hasElectronBinary(electronDir)) {
     return;
