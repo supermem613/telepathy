@@ -36,27 +36,21 @@ describe("ensure-electron installer guard", () => {
     }
   });
 
-  it("uses Electron's supported resolver instead of in-process install.js side effects", () => {
-    assert.match(installElectronWithWait.toString(), /require\('electron'\)/);
+  it("runs Electron install.js as a standalone process instead of requiring it in-process", () => {
+    assert.match(installElectronWithWait.toString(), /install\.js/);
     assert.match(installElectronWithWait.toString(), /timeout:\s*timeoutMs/);
+    assert.match(installElectronWithWait.toString(), /hasElectronBinary/);
+    assert.doesNotMatch(installElectronWithWait.toString(), /require\('electron'\)/);
     assert.doesNotMatch(installElectronWithWait.toString(), /downloadArtifact/);
     assert.doesNotMatch(installElectronWithWait.toString(), /extractZip/);
     assert.doesNotMatch(installElectronWithWait.toString(), /require\(path\.join\(process\.cwd\(\), "install\.js"\)\)/);
   });
 
-  it("fails fast when Electron's supported resolver cannot load", () => {
+  it("fails fast when standalone install.js cannot produce path.txt", () => {
     const electronDir = makeFakeElectronDir("");
-    const originalWrite = process.stderr.write.bind(process.stderr);
-    let stderr = "";
     try {
-      process.stderr.write = ((chunk: string | Uint8Array) => {
-        stderr += chunk.toString();
-        return true;
-      }) as typeof process.stderr.write;
-      assert.throws(() => installElectronWithWait(electronDir, 250), /Electron install failed/);
-      assert.match(stderr, /Cannot find module 'electron'/);
+      assert.throws(() => installElectronWithWait(electronDir, 250), /Electron install finished but no executable path was produced/);
     } finally {
-      process.stderr.write = originalWrite;
       rmSync(electronDir, { recursive: true, force: true });
     }
   });

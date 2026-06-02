@@ -18,21 +18,29 @@ export function hasElectronBinary(electronDir: string): boolean {
 }
 
 export function installElectronWithWait(electronDir: string, timeoutMs = DEFAULT_ELECTRON_INSTALL_TIMEOUT_MS): void {
-  const projectRoot = resolve(electronDir, "..", "..");
-  const result = spawnSync(process.execPath, ["-e", "require('electron')"], {
-    cwd: projectRoot,
+  const result = spawnSync(process.execPath, [join(electronDir, "install.js")], {
+    cwd: electronDir,
     timeout: timeoutMs,
     stdio: "pipe",
     encoding: "utf8",
   });
   if (result.status !== 0) {
+    if (result.stdout) {
+      process.stdout.write(result.stdout);
+    }
     if (result.stderr) {
       process.stderr.write(result.stderr);
     }
     throw new Error(`Electron install failed with exit code ${result.status ?? "null"}`);
   }
+  if (result.stdout) {
+    process.stdout.write(result.stdout);
+  }
   if (result.stderr) {
     process.stderr.write(result.stderr);
+  }
+  if (!hasElectronBinary(electronDir)) {
+    throw new Error("Electron install finished but no executable path was produced");
   }
 }
 
