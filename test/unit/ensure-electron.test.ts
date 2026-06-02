@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import {
-  createElectronInstallScript,
   DEFAULT_ELECTRON_INSTALL_TIMEOUT_MS,
   hasElectronBinary,
   installElectronWithWait,
@@ -37,17 +36,15 @@ describe("ensure-electron installer guard", () => {
     }
   });
 
-  it("installs through the downloader directly instead of waiting on install.js side effects", () => {
-    const script = createElectronInstallScript();
-    assert.match(script, /downloadArtifact/);
-    assert.match(script, /AbortSignal\.timeout\(timeoutMs\)/);
-    assert.match(script, /extractZip/);
-    assert.match(script, /function platformExecutablePath\(\)/);
-    assert.doesNotMatch(script, /const platformPath = "electron\.exe"/);
-    assert.doesNotMatch(script, /install\.js/);
+  it("uses Electron's supported resolver instead of in-process install.js side effects", () => {
+    assert.match(installElectronWithWait.toString(), /require\('electron'\)/);
+    assert.match(installElectronWithWait.toString(), /timeout:\s*timeoutMs/);
+    assert.doesNotMatch(installElectronWithWait.toString(), /downloadArtifact/);
+    assert.doesNotMatch(installElectronWithWait.toString(), /extractZip/);
+    assert.doesNotMatch(installElectronWithWait.toString(), /require\(path\.join\(process\.cwd\(\), "install\.js"\)\)/);
   });
 
-  it("fails fast when Electron package metadata is missing", () => {
+  it("fails fast when Electron's supported resolver cannot load", () => {
     const electronDir = makeFakeElectronDir("");
     const originalWrite = process.stderr.write.bind(process.stderr);
     let stderr = "";
@@ -57,7 +54,7 @@ describe("ensure-electron installer guard", () => {
         return true;
       }) as typeof process.stderr.write;
       assert.throws(() => installElectronWithWait(electronDir, 250), /Electron install failed/);
-      assert.match(stderr, /Cannot find package '@electron\/get'/);
+      assert.match(stderr, /Cannot find module 'electron'/);
     } finally {
       process.stderr.write = originalWrite;
       rmSync(electronDir, { recursive: true, force: true });
