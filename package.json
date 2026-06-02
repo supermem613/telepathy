@@ -1,6 +1,6 @@
 {
   "name": "telepathy",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "description": "Peer-to-peer terminal sharing over the LAN: expose any process under ConPTY, watch from any other box",
   "type": "module",
   "bin": {
@@ -54,5 +54,8 @@
     "tsx": "^4.21.0",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.20.0"
+  },
+  "overrides": {
+    "yauzl": "3.3.2"
   }
 }
