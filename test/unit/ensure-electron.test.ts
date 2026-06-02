@@ -42,6 +42,8 @@ describe("ensure-electron installer guard", () => {
     assert.match(script, /downloadArtifact/);
     assert.match(script, /AbortSignal\.timeout\(timeoutMs\)/);
     assert.match(script, /extractZip/);
+    assert.match(script, /function platformExecutablePath\(\)/);
+    assert.doesNotMatch(script, /const platformPath = "electron\.exe"/);
     assert.doesNotMatch(script, /install\.js/);
   });
 

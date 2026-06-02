@@ -5,21 +5,6 @@ import { fileURLToPath } from "node:url";
 
 export const DEFAULT_ELECTRON_INSTALL_TIMEOUT_MS = 600_000;
 
-function platformExecutablePath(): string {
-  switch (process.platform) {
-    case "darwin":
-      return "Electron.app/Contents/MacOS/Electron";
-    case "freebsd":
-    case "linux":
-    case "openbsd":
-      return "electron";
-    case "win32":
-      return "electron.exe";
-    default:
-      throw new Error(`Electron builds are not available on platform: ${process.platform}`);
-  }
-}
-
 export function hasElectronBinary(electronDir: string): boolean {
   const pathFile = join(electronDir, "path.txt");
   if (!existsSync(pathFile)) {
@@ -39,8 +24,22 @@ const path = require("node:path");
 const timeoutMs = Number(process.argv[1]);
 const electronDir = process.cwd();
 const pathFile = path.join(electronDir, "path.txt");
-const platformPath = ${JSON.stringify(platformExecutablePath())};
 let lastProgress = Date.now();
+
+function platformExecutablePath() {
+  switch (process.platform) {
+    case "darwin":
+      return "Electron.app/Contents/MacOS/Electron";
+    case "freebsd":
+    case "linux":
+    case "openbsd":
+      return "electron";
+    case "win32":
+      return "electron.exe";
+    default:
+      throw new Error(\`Electron builds are not available on platform: \${process.platform}\`);
+  }
+}
 
 async function main() {
   const { downloadArtifact } = await import("@electron/get");
@@ -70,7 +69,7 @@ async function main() {
   if (fs.existsSync(sourceTypes)) {
     fs.renameSync(sourceTypes, path.join(electronDir, "electron.d.ts"));
   }
-  fs.writeFileSync(pathFile, platformPath);
+  fs.writeFileSync(pathFile, platformExecutablePath());
 }
 
 main().catch((err) => {
