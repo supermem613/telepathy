@@ -1,10 +1,15 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { DEFAULT_ELECTRON_INSTALL_TIMEOUT_MS, installElectronWithWait } from "../support/ensure-electron.js";
+import {
+  createElectronInstallScript,
+  DEFAULT_ELECTRON_INSTALL_TIMEOUT_MS,
+  hasElectronBinary,
+  installElectronWithWait,
+} from "../support/ensure-electron.js";
 
 function makeFakeElectronDir(installJs: string): string {
   const root = mkdtempSync(join(tmpdir(), "telepathy-electron-fake-"));
@@ -26,34 +31,43 @@ describe("ensure-electron installer guard", () => {
     try {
       const result = spawnSync(process.execPath, [join(electronDir, "install.js")], { cwd: electronDir });
       assert.equal(result.status, 0);
-      assert.equal(existsSync(join(electronDir, "path.txt")), false);
+      assert.equal(hasElectronBinary(electronDir), false);
     } finally {
       rmSync(electronDir, { recursive: true, force: true });
     }
   });
 
-  it("fails fast when install.js never produces the executable path", () => {
+  it("installs through the downloader directly instead of waiting on install.js side effects", () => {
+    const script = createElectronInstallScript();
+    assert.match(script, /downloadArtifact/);
+    assert.match(script, /AbortSignal\.timeout\(timeoutMs\)/);
+    assert.match(script, /extractZip/);
+    assert.doesNotMatch(script, /install\.js/);
+  });
+
+  it("fails fast when Electron package metadata is missing", () => {
+    const electronDir = makeFakeElectronDir("");
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    let stderr = "";
+    try {
+      process.stderr.write = ((chunk: string | Uint8Array) => {
+        stderr += chunk.toString();
+        return true;
+      }) as typeof process.stderr.write;
+      assert.throws(() => installElectronWithWait(electronDir, 250), /Electron install failed/);
+      assert.match(stderr, /Cannot find package '@electron\/get'/);
+    } finally {
+      process.stderr.write = originalWrite;
+      rmSync(electronDir, { recursive: true, force: true });
+    }
+  });
+
+  it("detects a completed Electron install from path.txt and dist", () => {
     const electronDir = makeFakeElectronDir("");
     try {
-      assert.throws(() => installElectronWithWait(electronDir, 250), /Electron install failed/);
-    } finally {
-      rmSync(electronDir, { recursive: true, force: true });
-    }
-  });
-
-  it("waits for install.js side effects and produces path.txt", () => {
-    const electronDir = makeFakeElectronDir(`
-const fs = require("node:fs");
-const path = require("node:path");
-setTimeout(() => {
-  fs.writeFileSync(path.join(process.cwd(), "dist", "electron"), "");
-  fs.writeFileSync(path.join(process.cwd(), "path.txt"), "electron");
-}, 25);
-`);
-    try {
-      installElectronWithWait(electronDir, 1_000);
-      assert.equal(existsSync(join(electronDir, "path.txt")), true);
-      assert.equal(existsSync(join(electronDir, "dist", "electron")), true);
+      writeFileSync(join(electronDir, "dist", process.platform === "win32" ? "electron.exe" : "electron"), "");
+      writeFileSync(join(electronDir, "path.txt"), process.platform === "win32" ? "electron.exe" : "electron");
+      assert.equal(hasElectronBinary(electronDir), true);
     } finally {
       rmSync(electronDir, { recursive: true, force: true });
     }

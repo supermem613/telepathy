@@ -5,6 +5,21 @@ import { fileURLToPath } from "node:url";
 
 export const DEFAULT_ELECTRON_INSTALL_TIMEOUT_MS = 600_000;
 
+function platformExecutablePath(): string {
+  switch (process.platform) {
+    case "darwin":
+      return "Electron.app/Contents/MacOS/Electron";
+    case "freebsd":
+    case "linux":
+    case "openbsd":
+      return "electron";
+    case "win32":
+      return "electron.exe";
+    default:
+      throw new Error(`Electron builds are not available on platform: ${process.platform}`);
+  }
+}
+
 export function hasElectronBinary(electronDir: string): boolean {
   const pathFile = join(electronDir, "path.txt");
   if (!existsSync(pathFile)) {
@@ -17,44 +32,68 @@ export function hasElectronBinary(electronDir: string): boolean {
   return existsSync(join(electronDir, "dist", executable));
 }
 
-export function installElectronWithWait(electronDir: string, timeoutMs = DEFAULT_ELECTRON_INSTALL_TIMEOUT_MS): void {
-  const installScript = `
+export function createElectronInstallScript(): string {
+  return `
 const fs = require("node:fs");
 const path = require("node:path");
 const timeoutMs = Number(process.argv[1]);
-const start = Date.now();
-let lastProgress = start;
-const pathFile = path.join(process.cwd(), "path.txt");
-require(path.join(process.cwd(), "install.js"));
-const poll = () => {
-  try {
-    const rel = fs.readFileSync(pathFile, "utf8").trim();
-    if (rel && fs.existsSync(path.join(process.cwd(), "dist", rel))) {
-      process.exit(0);
-    }
-  } catch (err) {
-    if (err.code !== "ENOENT") {
-      throw err;
-    }
+const electronDir = process.cwd();
+const pathFile = path.join(electronDir, "path.txt");
+const platformPath = ${JSON.stringify(platformExecutablePath())};
+let lastProgress = Date.now();
+
+async function main() {
+  const { downloadArtifact } = await import("@electron/get");
+  const extractZip = (await import("extract-zip")).default;
+  const { version } = JSON.parse(fs.readFileSync(path.join(electronDir, "package.json"), "utf8"));
+  const checksums = JSON.parse(fs.readFileSync(path.join(electronDir, "checksums.json"), "utf8"));
+  const zipPath = await downloadArtifact({
+    version,
+    artifactName: "electron",
+    checksums,
+    platform: process.platform,
+    arch: process.arch,
+    downloadOptions: {
+      signal: AbortSignal.timeout(timeoutMs),
+      getProgressCallback: async (progress) => {
+        if (Date.now() - lastProgress >= 60_000) {
+          const total = progress.total === null ? "unknown" : String(progress.total);
+          console.error(\`Still downloading Electron: \${progress.transferred}/\${total} bytes\`);
+          lastProgress = Date.now();
+        }
+      },
+    },
+  });
+  fs.rmSync(path.join(electronDir, "dist"), { recursive: true, force: true });
+  await extractZip(zipPath, { dir: path.join(electronDir, "dist") });
+  const sourceTypes = path.join(electronDir, "dist", "electron.d.ts");
+  if (fs.existsSync(sourceTypes)) {
+    fs.renameSync(sourceTypes, path.join(electronDir, "electron.d.ts"));
   }
-  if (Date.now() - lastProgress >= 60_000) {
-    console.error("Still waiting for Electron install to produce path.txt");
-    lastProgress = Date.now();
-  }
-  if (Date.now() - start >= timeoutMs) {
-    console.error("Timed out waiting for Electron install to produce path.txt");
-    process.exit(1);
-  }
-  setTimeout(poll, 50);
-};
-poll();
+  fs.writeFileSync(pathFile, platformPath);
+}
+
+main().catch((err) => {
+  console.error(err && err.stack ? err.stack : err);
+  process.exit(1);
+});
 `;
-  const result = spawnSync(process.execPath, ["-e", installScript, String(timeoutMs)], {
+}
+
+export function installElectronWithWait(electronDir: string, timeoutMs = DEFAULT_ELECTRON_INSTALL_TIMEOUT_MS): void {
+  const result = spawnSync(process.execPath, ["-e", createElectronInstallScript(), String(timeoutMs)], {
     cwd: electronDir,
-    stdio: "inherit",
+    stdio: "pipe",
+    encoding: "utf8",
   });
   if (result.status !== 0) {
+    if (result.stderr) {
+      process.stderr.write(result.stderr);
+    }
     throw new Error(`Electron install failed with exit code ${result.status ?? "null"}`);
+  }
+  if (result.stderr) {
+    process.stderr.write(result.stderr);
   }
 }
 
