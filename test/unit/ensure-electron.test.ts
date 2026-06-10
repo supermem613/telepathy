@@ -19,7 +19,7 @@ function makeFakeElectronDir(installJs: string): string {
 }
 
 describe("ensure-electron installer guard", () => {
-  it("pins the Electron installer ZIP reader to a Node 24-compatible version", () => {
+  it("pins the Electron installer ZIP reader to a Node 22-compatible version", () => {
     const packageJson = readFileSync("package.json", "utf8");
     const packageLock = readFileSync("package-lock.json", "utf8");
     assert.match(packageJson, /"overrides":\s*\{[\s\S]*"yauzl": "3\.3\.2"/);
