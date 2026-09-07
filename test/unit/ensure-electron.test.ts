@@ -19,11 +19,24 @@ function makeFakeElectronDir(installJs: string): string {
 }
 
 describe("ensure-electron installer guard", () => {
-  it("pins the Electron installer ZIP reader to a Node 22-compatible version", () => {
-    const packageJson = readFileSync("package.json", "utf8");
-    const packageLock = readFileSync("package-lock.json", "utf8");
-    assert.match(packageJson, /"overrides":\s*\{[\s\S]*"yauzl": "3\.3\.2"/);
-    assert.match(packageLock, /"node_modules\/yauzl":\s*\{[\s\S]*"version": "3\.3\.2"/);
+  it("uses Electron's Node 22-compatible native ZIP extractor", () => {
+    const packageJson = JSON.parse(readFileSync("package.json", "utf8")) as {
+      dependencies?: Record<string, string>;
+    };
+    const packageLock = JSON.parse(readFileSync("package-lock.json", "utf8")) as {
+      packages?: Record<string, {
+        version?: string;
+        dependencies?: Record<string, string>;
+        engines?: { node?: string };
+      }>;
+    };
+    const electronLock = packageLock.packages?.["node_modules/electron"];
+    const extractorLock = packageLock.packages?.["node_modules/@electron-internal/extract-zip"];
+
+    assert.equal(packageJson.dependencies?.electron, "^42.0.0");
+    assert.equal(electronLock?.dependencies?.["@electron-internal/extract-zip"], "^1.0.1");
+    assert.ok(extractorLock?.version, "package-lock.json must resolve Electron's native ZIP extractor");
+    assert.equal(extractorLock.engines?.node, ">=22.12.0");
   });
 
   it("allows slow cold Electron downloads on fresh Linux CI runners", () => {
